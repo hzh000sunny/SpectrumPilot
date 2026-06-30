@@ -122,33 +122,243 @@ Coverage should be prioritized in this order:
 
 The product should expose index coverage clearly. If only recent years have been indexed, the UI should say that directly and allow the user to trigger online search for older items.
 
-## 8. Canonical Record Model
+## 8. Structured Storage Format
 
-The local index should not store raw HTML as its primary data model.
+The local index should separate crawler state from business records.
 
-Instead, the crawler should normalize each discovered item into a canonical record.
+The crawler should store two kinds of data:
 
-Minimum fields:
+- directory manifests, which preserve the remote directory shape for sync and diffing
+- domain records, which normalize roots, work groups, meetings, proposal files, and auxiliary files for search and download
+
+This separation matters because a parser bug or schema upgrade should not require a full remote crawl. The product should be able to rebuild domain records and lookup indexes from existing manifests.
+
+### 8.1 Directory Manifest
+
+A directory manifest represents one remote 3GPP directory listing page.
+
+It is the primary input for background incremental refresh.
+
+Example:
 
 ```json
 {
-  "id": "string",
-  "kind": "file",
-  "sourceType": "tdoc-archive",
-  "sourceUrl": "https://example.org/file.zip",
-  "parentUrl": "https://example.org/Docs/",
-  "displayName": "R2-167140.zip",
-  "canonicalKey": "R2-167140",
-  "workGroup": "RAN WG2",
-  "meetingCode": "TSGR2_95bis",
-  "title": "string",
-  "size": 55823,
-  "lastModified": "2016-10-01T06:38:01Z",
-  "fingerprint": "sha256:..."
+  "schemaVersion": 1,
+  "recordType": "directory-manifest",
+  "url": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/",
+  "pathSegments": ["tsg_ran", "WG2_RL2", "TSGR2_133bis"],
+  "directoryRole": "meeting-root",
+  "checkedAt": "2026-07-01T00:00:00Z",
+  "childFingerprint": "sha256:...",
+  "children": [
+    {
+      "name": "Docs",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs",
+      "role": "docs",
+      "remoteModifiedRaw": "2026/06/25 9:59",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "Welcome_to_RAN_WG1.zip",
+      "kind": "file",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG1_RL1/TSGR1_127/Welcome_to_RAN_WG1.zip",
+      "role": "auxiliary-file",
+      "remoteModifiedRaw": "2026/05/06 7:58",
+      "sizeRaw": "1172,2 KB",
+      "sizeBytes": 1200333
+    }
+  ]
 }
 ```
 
-The schema can grow, but the first version should keep the record small and query-friendly.
+`remoteModifiedRaw` should always be preserved. The site exposes directory timestamps as page text, and the app should not assume the exact source timezone unless that is verified later.
+
+### 8.2 Meeting Record
+
+A meeting record represents a meeting directory such as:
+
+```text
+https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/
+```
+
+Example:
+
+```json
+{
+  "schemaVersion": 1,
+  "recordType": "meeting",
+  "id": "meeting:tsg_ran/WG2_RL2/TSGR2_133bis",
+  "root": "tsg_ran",
+  "workGroupPath": "WG2_RL2",
+  "workGroupCode": "RAN2",
+  "workGroupLabel": "RAN WG2",
+  "meetingSlug": "TSGR2_133bis",
+  "meetingSeries": "TSGR2",
+  "meetingNumber": 133,
+  "meetingVariant": "bis",
+  "location": null,
+  "scheduledMonth": null,
+  "url": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/",
+  "docsUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs",
+  "docsState": "available",
+  "lastSeenRemoteModifiedRaw": "2026/04/17 12:13"
+}
+```
+
+Meeting fields parsed from the slug are best-effort metadata. The stable identity is `root + workGroupPath + meetingSlug`.
+
+Some meeting slugs contain more information:
+
+```json
+{
+  "meetingSlug": "TSGS2_175_Dalian_2026-05",
+  "meetingSeries": "TSGS2",
+  "meetingNumber": 175,
+  "meetingVariant": null,
+  "location": "Dalian",
+  "scheduledMonth": "2026-05"
+}
+```
+
+The model must allow meetings whose `Docs` folder is missing, empty, forbidden, or present but not yet indexed.
+
+Recommended `docsState` values:
+
+| Value | Meaning |
+|---|---|
+| `unknown` | The meeting directory has not been inspected yet |
+| `available` | A `Docs` directory exists and can be listed |
+| `empty` | A `Docs` directory exists but has no indexed files |
+| `missing` | No `Docs` directory was found in the meeting root |
+| `forbidden` | The directory exists but remote access is denied |
+| `error` | The directory could not be inspected due to a transient error |
+
+### 8.3 TDoc File Record
+
+A TDoc file record represents a primary proposal zip under a meeting `Docs` folder.
+
+Example:
+
+```json
+{
+  "schemaVersion": 1,
+  "recordType": "tdoc-file",
+  "id": "file-url-sha256:...",
+  "canonicalUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip",
+  "parentDirectoryUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/",
+  "root": "tsg_ran",
+  "workGroupPath": "WG2_RL2",
+  "workGroupCode": "RAN2",
+  "meetingId": "meeting:tsg_ran/WG2_RL2/TSGR2_133bis",
+  "meetingSlug": "TSGR2_133bis",
+  "containerRole": "docs",
+  "fileName": "R2-2601401.zip",
+  "extension": "zip",
+  "remoteModifiedRaw": "2026/04/03 9:50",
+  "sizeRaw": "78,5 KB",
+  "sizeBytes": 80384,
+  "tdoc": {
+    "key": "R2-2601401",
+    "prefix": "R2",
+    "numberText": "2601401",
+    "yearHint": 2026
+  },
+  "classification": {
+    "isPrimaryTdoc": true,
+    "isZip": true,
+    "isIgnoredArtifact": false
+  }
+}
+```
+
+The file ID should be derived from the canonical URL, not the TDoc number. A TDoc number can theoretically appear in more than one remote location, and the URL is the real downloadable identity.
+
+### 8.4 Auxiliary File Record
+
+Meeting roots may contain files such as `TdocsByAgenda.htm`, welcome slides, meeting indexes, or root-level zip files. These should not be discarded, but they should not be treated as primary proposal files.
+
+Example:
+
+```json
+{
+  "schemaVersion": 1,
+  "recordType": "auxiliary-file",
+  "id": "file-url-sha256:...",
+  "canonicalUrl": "https://www.3gpp.org/ftp/tsg_sa/WG2_Arch/TSGS2_175_Dalian_2026-05/TdocsByAgenda.htm",
+  "root": "tsg_sa",
+  "workGroupPath": "WG2_Arch",
+  "workGroupCode": "SA2",
+  "meetingId": "meeting:tsg_sa/WG2_Arch/TSGS2_175_Dalian_2026-05",
+  "meetingSlug": "TSGS2_175_Dalian_2026-05",
+  "containerRole": "meeting-root",
+  "fileName": "TdocsByAgenda.htm",
+  "extension": "htm",
+  "remoteModifiedRaw": "2026/06/03 15:01",
+  "sizeRaw": "3743,3 KB",
+  "sizeBytes": 3833139,
+  "classification": {
+    "isPrimaryTdoc": false,
+    "isZip": false,
+    "isIgnoredArtifact": false
+  }
+}
+```
+
+Artifacts such as `__MACOSX` should either be filtered from business records or recorded with `isIgnoredArtifact: true`. They must still be considered by directory manifest fingerprinting if they appear in the remote listing, otherwise the manifest diff may become misleading.
+
+### 8.5 Lookup Indexes
+
+Lookup indexes are derived data. They should be rebuildable from domain records.
+
+Proposal lookup example:
+
+```json
+{
+  "schemaVersion": 1,
+  "indexType": "by-tdoc-prefix",
+  "prefix": "R2",
+  "items": {
+    "R2-2601401": [
+      "file-url-sha256:..."
+    ],
+    "R2-2601402": [
+      "file-url-sha256:..."
+    ]
+  }
+}
+```
+
+Meeting lookup example:
+
+```json
+{
+  "schemaVersion": 1,
+  "indexType": "by-meeting",
+  "meetingSlug": "TSGR2_133bis",
+  "meetingId": "meeting:tsg_ran/WG2_RL2/TSGR2_133bis",
+  "docsFileCount": 1310,
+  "knownTdocCount": 1310,
+  "lastIndexedAt": "2026-07-01T00:00:00Z"
+}
+```
+
+The first implementation can store indexes as JSON shards. A later implementation may mirror these indexes into SQLite or FTS tables for faster search.
+
+### 8.6 Storage Identity Rules
+
+Use these identity rules consistently:
+
+| Object | Stable ID |
+|---|---|
+| Root | `root:<root>` |
+| Work group | `workgroup:<root>/<workGroupPath>` |
+| Meeting | `meeting:<root>/<workGroupPath>/<meetingSlug>` |
+| File | `file-url-sha256:<hash(canonicalUrl)>` |
+| Directory manifest | `dir-url-sha256:<hash(directoryUrl)>` |
+
+TDoc numbers such as `R2-2601401` are search keys, not primary IDs.
 
 ## 9. Local Storage Layout
 
@@ -167,11 +377,14 @@ Recommended state layout:
   logs\
   cache\
     3gpp\
-      roots.json
-      manifests\
-      records\
-      lookup\
-      sync-state.json
+      catalog\
+        roots.json
+        groups\
+        meetings\
+        records\
+        indexes\
+        manifests\
+        sync-state.json
 ```
 
 Recommended workspace layout:
@@ -193,10 +406,25 @@ Do not store the entire world in one JSON file.
 
 Use small files grouped by responsibility:
 
+```text
+%APPDATA%\SpectrumPilot\cache\3gpp\catalog\
+  roots.json
+  groups\
+  meetings\
+  records\
+  indexes\
+  manifests\
+  sync-state.json
+```
+
+Recommended shard responsibilities:
+
 - `roots.json` for known entry points and adapter types
-- `manifests/` for directory snapshots
+- `groups/` for work group summaries and branch metadata
+- `meetings/` for meeting-level manifests and meeting records
 - `records/` for normalized item records
-- `lookup/` for reverse lookup tables
+- `indexes/` for lookup shards derived from records
+- `manifests/` for raw directory snapshots
 - `sync-state.json` for refresh progress and backoff state
 
 This makes incremental updates cheaper and keeps the data set manageable when the catalog grows.
