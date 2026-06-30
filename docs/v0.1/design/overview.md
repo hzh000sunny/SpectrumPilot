@@ -93,7 +93,7 @@ SpectrumPilot/
 │       ├── package.json
 │       └── vite.config.ts
 ├── crates/
-│   ├── threegpp-core/
+│   ├── 3gpp-core/
 │   └── local-index/
 └── tests/
 ```
@@ -111,16 +111,13 @@ Application data should live under the normal Windows application data directory
   logs/
 ```
 
-Downloaded proposal files should use a user-configurable directory. A practical default can be selected during first-run setup or in Settings.
+Downloaded proposal files should use a user-configurable workspace directory. The detailed runtime layout is defined in `runtime-layout.md`.
 
-Example:
+Example workspace root:
 
 ```text
-D:\3GPP\
-  RAN1\
-    R1-2401234.*
-  RAN2\
-    R2-2404551.*
+D:\SpectrumPilotWorkspace\
+  3gpp\
 ```
 
 The database should store file paths and metadata, not duplicate file contents.
@@ -156,7 +153,7 @@ React page
   ↓ invokes
 Tauri command
   ↓ calls
-threegpp-core
+3gpp-core
   ↓ writes
 SQLite metadata + local proposal files
 ```
@@ -175,7 +172,7 @@ Migration options:
 | Reimplement in Rust | URL rules and parsing are straightforward enough to make the new core cleaner |
 | Temporary bridge, then rewrite | Existing logic is useful for validation but should not become long-term architecture |
 
-The preferred long-term state is Rust core logic under `threegpp-core`.
+The preferred long-term state is Rust core logic under `3gpp-core`.
 
 ## 9. Testing Direction
 

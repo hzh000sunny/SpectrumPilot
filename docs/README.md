@@ -33,7 +33,8 @@ docs/
     ├── prd/
     │   └── spectrumpilot.md
     ├── design/
-    │   └── overview.md
+    │   ├── overview.md
+    │   └── runtime-layout.md
     ├── plans/
     │   └── README.md
     └── specs/

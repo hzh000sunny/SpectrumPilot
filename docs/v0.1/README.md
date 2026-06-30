@@ -27,7 +27,7 @@ v0.1/
 | Goal | Read First | Then Read |
 |---|---|---|
 | Understand the product | `prd/spectrumpilot.md` | `design/overview.md` |
-| Understand architecture | `design/overview.md` | `../STRUCTURE.md` |
+| Understand architecture | `design/overview.md` | `design/runtime-layout.md` |
 | Understand early decisions | `specs/initial-brainstorm.md` | `prd/spectrumpilot.md` |
 | Prepare implementation | `prd/spectrumpilot.md` | `design/overview.md`, then future implementation plans |
 
