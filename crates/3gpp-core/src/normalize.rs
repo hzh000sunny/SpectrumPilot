@@ -19,13 +19,17 @@ pub fn parse_size_bytes(raw: &str) -> Option<u64> {
     let raw = raw.trim();
     let mut parts = raw.split_whitespace();
     let value = parts.next()?.replace(',', ".");
-    let unit = parts.next().unwrap_or("B").to_ascii_uppercase();
+    let unit = parts.next().map(|unit| unit.to_ascii_uppercase());
+    if parts.next().is_some() {
+        return None;
+    }
     let number: f64 = value.parse().ok()?;
-    let multiplier = match unit.as_str() {
+    let multiplier = match unit.as_deref().unwrap_or("B") {
+        "B" => 1.0,
         "KB" => 1024.0,
         "MB" => 1024.0 * 1024.0,
         "GB" => 1024.0 * 1024.0 * 1024.0,
-        _ => 1.0,
+        _ => return None,
     };
     Some((number * multiplier).round() as u64)
 }
@@ -36,10 +40,10 @@ pub fn parse_tdoc_key(file_name: &str) -> Option<TDocKey> {
     if prefix.is_empty() || number_text.is_empty() {
         return None;
     }
-    if !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !is_likely_tdoc_prefix(prefix) {
         return None;
     }
-    if !number_text.chars().all(|c| c.is_ascii_digit()) {
+    if !matches!(number_text.len(), 5..=7) || !number_text.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
     let year_hint = number_text
@@ -53,6 +57,15 @@ pub fn parse_tdoc_key(file_name: &str) -> Option<TDocKey> {
         number_text: number_text.to_string(),
         year_hint,
     })
+}
+
+fn is_likely_tdoc_prefix(prefix: &str) -> bool {
+    matches!(
+        prefix,
+        "CP" | "GP" | "NP" | "RP" | "SP" | "TP" | "R1" | "R2" | "R3" | "R4" | "R5" | "R6"
+            | "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "C1" | "C2" | "C3" | "C4" | "C5"
+            | "C6"
+    )
 }
 
 pub fn parse_meeting_slug(slug: &str) -> ParsedMeetingSlug {

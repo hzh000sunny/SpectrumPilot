@@ -61,3 +61,41 @@ fn infers_work_group_from_path() {
     assert_eq!(wg.code.as_deref(), Some("RAN2"));
     assert_eq!(wg.label.as_deref(), Some("RAN WG2"));
 }
+
+#[test]
+fn parses_other_real_tdoc_families() {
+    let cases = [
+        ("CP-201031.zip", "CP-201031", "CP", "201031", Some(2020)),
+        ("GP-040012.zip", "GP-040012", "GP", "040012", Some(2004)),
+        ("NP-040020.zip", "NP-040020", "NP", "040020", Some(2004)),
+        ("RP-99616.zip", "RP-99616", "RP", "99616", Some(1999)),
+        ("TP-030009.zip", "TP-030009", "TP", "030009", Some(2003)),
+        ("SP-251469.zip", "SP-251469", "SP", "251469", Some(2025)),
+        ("R1-99850.zip", "R1-99850", "R1", "99850", Some(1999)),
+        ("S1-261026.zip", "S1-261026", "S1", "261026", Some(2026)),
+        ("S4-260036.zip", "S4-260036", "S4", "260036", Some(2026)),
+        ("C6-180102.zip", "C6-180102", "C6", "180102", Some(2018)),
+    ];
+
+    for (input, key, prefix, number_text, year_hint) in cases {
+        let parsed = parse_tdoc_key(input).expect(input);
+        assert_eq!(parsed.key, key);
+        assert_eq!(parsed.prefix, prefix);
+        assert_eq!(parsed.number_text, number_text);
+        assert_eq!(parsed.year_hint, year_hint);
+    }
+}
+
+#[test]
+fn rejects_unknown_size_units() {
+    assert_eq!(parse_size_bytes("78 XB"), None);
+    assert_eq!(parse_size_bytes("78 KB/s"), None);
+}
+
+#[test]
+fn rejects_non_tdoc_filenames() {
+    assert_eq!(parse_tdoc_key("README-123.zip"), None);
+    assert_eq!(parse_tdoc_key("WG1-12345.zip"), None);
+    assert_eq!(parse_tdoc_key("RAN2-12345.zip"), None);
+    assert_eq!(parse_tdoc_key("ABC-12345.zip"), None);
+}
