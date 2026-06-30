@@ -15,7 +15,9 @@ v0.1/
 ├── prd/
 │   └── spectrumpilot.md
 ├── design/
-│   └── overview.md
+│   ├── overview.md
+│   ├── runtime-layout.md
+│   └── 3gpp-local-index.md
 ├── plans/
 │   └── README.md
 └── specs/
@@ -27,7 +29,7 @@ v0.1/
 | Goal | Read First | Then Read |
 |---|---|---|
 | Understand the product | `prd/spectrumpilot.md` | `design/overview.md` |
-| Understand architecture | `design/overview.md` | `design/runtime-layout.md` |
+| Understand architecture | `design/overview.md` | `design/runtime-layout.md`, `design/3gpp-local-index.md` |
 | Understand early decisions | `specs/initial-brainstorm.md` | `prd/spectrumpilot.md` |
 | Prepare implementation | `prd/spectrumpilot.md` | `design/overview.md`, then future implementation plans |
 

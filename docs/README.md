@@ -34,7 +34,8 @@ docs/
     │   └── spectrumpilot.md
     ├── design/
     │   ├── overview.md
-    │   └── runtime-layout.md
+    │   ├── runtime-layout.md
+    │   └── 3gpp-local-index.md
     ├── plans/
     │   └── README.md
     └── specs/
