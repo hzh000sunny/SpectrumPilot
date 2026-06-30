@@ -25,7 +25,8 @@ The module should:
 - resolve common 3GPP proposal and meeting queries from local data first
 - keep a structured local index of known 3GPP content
 - refresh the index incrementally instead of rescanning the full site
-- reduce the chance of triggering anti-bot or rate-limit behavior
+- keep background refresh polite and low-volume
+- make user-triggered online search as fast as practical when the local index misses
 - support direct download once the target URL is known
 - keep the implementation compatible with future AI-assisted research features
 
@@ -48,8 +49,10 @@ The first release should be practical, not exhaustive.
 3. Treat different 3GPP root structures as different source families.
 4. Store canonical records in a normalized format.
 5. Make change detection cheap enough to run on a timer.
-6. Limit remote requests aggressively.
-7. Allow the index to grow by adding adapters, not by rewriting the whole crawler.
+6. Separate foreground online search behavior from background sync behavior.
+7. Make foreground search fast, parallel, and user-visible.
+8. Make background sync conservative, incremental, and low-volume.
+9. Allow the index to grow by adding adapters, not by rewriting the whole crawler.
 
 ## 5. Recommended Architecture
 
@@ -85,18 +88,41 @@ The UI must not know how 3GPP URLs are derived. It only submits a request and re
 
 3GPP is not a single uniform tree. The module should register multiple source families and parse each one with the adapter that fits it.
 
-Examples of families the module is expected to encounter:
+For v0.1, the primary source scope is the six root directories under `https://www.3gpp.org/ftp/` whose names begin with `tsg_`:
+
+- `tsg_cn`
+- `tsg_ct`
+- `tsg_geran`
+- `tsg_ran`
+- `tsg_sa`
+- `tsg_t`
+
+These roots are enough for the first 3GPP proposal and meeting workflows. Other public roots can be added later if a concrete workflow requires them.
+
+Examples of later source families the module may encounter:
 
 - document archive trees such as `Docs`
 - specification trees such as `Specs`
 - email discussion trees such as `Email_Discussions`
 - meeting index trees such as `Meetings_3GPP_SYNC`
 - TDoc list pages such as `TdocListDefault`
-- organizational branches such as `tsg_ran`, `tsg_sa`, and `tsg_ct`
 
 The exact set of roots can expand over time. The important rule is that each family gets a parser that matches its structure.
 
-## 7. Canonical Record Model
+## 7. Coverage Priority
+
+The first index build should not assume that a full historical crawl is cheap.
+
+Coverage should be prioritized in this order:
+
+1. active `tsg_` branches with recent child updates
+2. recent meeting folders from the last few years
+3. older but frequently queried branches
+4. full historical backfill, only when it can run safely in the background
+
+The product should expose index coverage clearly. If only recent years have been indexed, the UI should say that directly and allow the user to trigger online search for older items.
+
+## 8. Canonical Record Model
 
 The local index should not store raw HTML as its primary data model.
 
@@ -124,7 +150,7 @@ Minimum fields:
 
 The schema can grow, but the first version should keep the record small and query-friendly.
 
-## 8. Local Storage Layout
+## 9. Local Storage Layout
 
 The runtime layout should stay consistent with the existing workspace rules:
 
@@ -161,7 +187,7 @@ Recommended workspace layout:
 
 The local index lives in application state because it is internal product data, not user content.
 
-## 9. Index Sharding Strategy
+## 10. Index Sharding Strategy
 
 Do not store the entire world in one JSON file.
 
@@ -175,22 +201,33 @@ Use small files grouped by responsibility:
 
 This makes incremental updates cheaper and keeps the data set manageable when the catalog grows.
 
-## 10. Refresh Strategy
+## 11. Background Refresh Strategy
 
-Refresh should be incremental and selective.
+Background refresh should be incremental and selective.
 
-### 10.1 Full-site rescans are forbidden as a routine strategy
+### 11.1 Full-site rescans are forbidden as a routine strategy
 
 The module should never scan the entire site on a timer just because the timer fired.
 
-### 10.2 Change detection order
+### 11.2 Parent-directory gating
+
+The first refresh check should happen at the parent directory level.
+
+3GPP directory listing pages include child rows with child URLs, names, and update timestamps. The background refresher should parse those child rows first and compare them with the stored parent manifest.
+
+Only children whose row data changed should be scheduled for deeper refresh.
+
+This avoids entering every child directory during each incremental update.
+
+### 11.3 Change detection order
 
 For each known directory or listing page, check in this order:
 
 1. `ETag`
 2. `Last-Modified`
-3. child-list fingerprint
-4. child count
+3. parsed child-row update timestamps
+4. child-list fingerprint
+5. child count
 
 If the server supports conditional requests, use them first:
 
@@ -199,7 +236,9 @@ If the server supports conditional requests, use them first:
 
 If the server does not support useful validators, compare the parsed child list against the stored manifest.
 
-### 10.3 Directory fingerprinting
+Observed 3GPP directory pages may not provide useful `ETag` or `Last-Modified` response headers for directory listings. The parser must therefore support child-row timestamp and fingerprint based detection as the normal path, not only as a fallback.
+
+### 11.4 Directory fingerprinting
 
 Directory fingerprints should be based on the normalized child set, not the page HTML alone.
 
@@ -213,7 +252,7 @@ Fingerprint inputs should include:
 
 The order of items should not affect the fingerprint.
 
-### 10.4 Refresh tiers
+### 11.5 Refresh tiers
 
 Use different refresh cadences for different nodes:
 
@@ -223,7 +262,7 @@ Use different refresh cadences for different nodes:
 
 The refresh scheduler should promote frequently used branches and demote rarely used ones.
 
-## 11. Search and Resolution Flow
+## 12. Search and Resolution Flow
 
 The resolver should follow this order:
 
@@ -245,19 +284,41 @@ Examples of normalized clues:
 
 The resolver should use clue type to choose the most likely root family before crawling remotely.
 
-## 12. Targeted Remote Crawl
+## 13. Foreground Online Search
+
+Foreground online search is different from background refresh.
+
+When the user is actively waiting for a search result and the local index misses, the system should optimize for response speed:
+
+- do not add artificial sleep between requests
+- search likely branches in parallel
+- stop remaining searches as soon as a strong match is found
+- show progress and searched branches in the UI
+- cache every discovered record so future searches become local hits
+
+Foreground search should still use sensible engineering limits:
+
+- cap total concurrency to avoid making the app unstable
+- use request timeouts
+- cancel work when the user cancels the search
+- stop retry loops after a clear failure
+
+The important rule is that anti-bot conservatism belongs to background sync. A user-triggered foreground search should be as fast as the network and the target site allow.
+
+## 14. Targeted Remote Crawl
 
 When the local index misses, the crawler should not restart from the top of the site.
 
 Instead, it should:
 
 - identify the likely source family
-- refresh only the related branch
+- search only the related branches
+- run likely branches in parallel during foreground search
 - stop as soon as enough information has been gathered to answer the query
 
-This is the main optimization that keeps the module fast and safe.
+This is the main optimization that keeps normal searches fast while still avoiding routine full-site scans.
 
-## 13. Download Flow
+## 15. Download Flow
 
 Once the resolver produces a file URL:
 
@@ -269,11 +330,11 @@ Once the resolver produces a file URL:
 
 The download flow should never require a second discovery pass if the URL is already known.
 
-## 14. Rate Limiting and Anti-Bot Protection
+## 16. Background Rate Limiting and Anti-Bot Protection
 
-The crawler should assume the site may throttle repeated requests.
+The background refresher should assume the site may throttle repeated requests.
 
-Required safeguards:
+Required safeguards for background work:
 
 - keep concurrency very low per host
 - add small random delays between requests
@@ -281,9 +342,31 @@ Required safeguards:
 - apply exponential backoff after failures
 - prefer shallow refreshes over deep recursive scans
 
-The goal is to be a polite consumer of a public site, not a mirror service.
+These safeguards apply to scheduled refresh and historical backfill. They do not impose artificial sleep on a foreground user search.
 
-## 15. Failure Handling
+## 17. Product Behavior and Usage
+
+The existing screenshot from another tool is only a reference for the old workflow. SpectrumPilot should not copy that tool's interface or exact behavior.
+
+The intended workflow is:
+
+1. user enters a proposal number, meeting code, or keyword
+2. SpectrumPilot searches the local index first
+3. if local data is insufficient, SpectrumPilot runs a fast online search
+4. matching candidates are displayed with source path, meeting, work group, and URL
+5. user downloads one or more selected items
+6. discovered metadata is kept for future searches
+
+The UI should also provide:
+
+- index coverage status
+- last refresh time
+- manual refresh controls
+- online search progress
+- downloaded file location
+- errors that explain whether the issue is local indexing, remote lookup, or download
+
+## 18. Failure Handling
 
 The module should handle these failures explicitly:
 
@@ -295,7 +378,7 @@ The module should handle these failures explicitly:
 
 In each case, keep the last known good data and mark the affected branch as stale rather than deleting it immediately.
 
-## 16. Testing Strategy
+## 19. Testing Strategy
 
 The first test set should cover:
 
@@ -304,30 +387,35 @@ The first test set should cover:
 - manifest diffing
 - fingerprint stability
 - refresh backoff behavior
+- foreground parallel search cancellation
+- foreground search result ranking
 - download path handling
 - adapter parsing for known 3GPP root shapes
 
 Integration tests should use recorded fixtures or mocked HTTP responses so that the crawler logic can be validated without depending on live site behavior.
 
-## 17. Open Questions
+## 20. Open Questions
 
 These items can be finalized during implementation:
 
 - whether the first index pass should use JSON only or JSON plus SQLite search tables
-- how many source families should be supported in the first milestone
 - whether a warm-start seed list should be hardcoded or generated from a bootstrap crawl
 - whether a nightly refresh is needed at v0.1 or only an hourly hot refresh plus on-demand refreshes
+- how far back the default recent-year bootstrap should go
+- whether a full historical backfill should be optional, hidden behind an advanced setting, or deferred entirely
 
-## 18. Implementation Boundary
+## 21. Implementation Boundary
 
 This design intentionally stays one layer above code.
 
 It defines:
 
 - the storage model
-- the refresh rules
+- the background refresh rules
+- the foreground online search rules
 - the resolution flow
-- the anti-bot constraints
+- the background anti-bot constraints
+- the user-facing workflow
 
 It does not yet define:
 

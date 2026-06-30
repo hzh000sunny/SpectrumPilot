@@ -52,6 +52,11 @@ The first implementation area is the 3GPP workflow because it can be built witho
 | v0.1 functional focus | 3GPP proposal and TDoc workflows |
 | AI scope | Future, not v0.1 |
 
+The 3GPP design work now splits search into two modes:
+
+- foreground user queries should return as fast as possible and may search in parallel
+- background index refresh should stay incremental, conservative, and low-volume
+
 ## PRD vs Design
 
 The PRD in `prd/spectrumpilot.md` is the product contract. The design in `design/overview.md` describes how the product should be implemented.

@@ -42,6 +42,12 @@ docs/
         └── initial-brainstorm.md
 ```
 
+Useful starting points:
+
+- `v0.1/design/overview.md` for the main architecture
+- `v0.1/design/runtime-layout.md` for runtime file placement
+- `v0.1/design/3gpp-local-index.md` for the 3GPP search and indexing strategy
+
 ## Key Principles
 
 - Keep each version directory as a complete product snapshot.
