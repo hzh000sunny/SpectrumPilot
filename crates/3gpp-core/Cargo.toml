@@ -1,0 +1,27 @@
+[package]
+name = "spectrum-3gpp-core"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "spectrum_3gpp_core"
+path = "src/lib.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+scraper = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+live-fetch = ["dep:reqwest", "dep:tokio"]

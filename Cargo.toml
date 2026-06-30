@@ -1,0 +1,5 @@
+[workspace]
+members = [
+  "crates/3gpp-core"
+]
+resolver = "2"
