@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordType": "directory-manifest",
+  "url": "https://www.3gpp.org/ftp/tsg_geran/",
+  "pathSegments": [
+    "tsg_geran"
+  ],
+  "directoryRole": "root",
+  "checkedAt": "2026-07-01T06:59:59.752971622+00:00",
+  "childFingerprint": "sha256:3441bf3d2936e1a794ad5f767540847738789367db89311485fe6cfb5ad759a7",
+  "children": [
+    {
+      "name": "TSG_GERAN",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/TSG_GERAN",
+      "role": "unknown",
+      "remoteModifiedRaw": "2016/02/10 10:51",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "Wg1_Radio_Aspects",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/Wg1_Radio_Aspects",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/13 16:21",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "Wg2_Protocol_Aspects",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/Wg2_Protocol_Aspects",
+      "role": "unknown",
+      "remoteModifiedRaw": "2014/09/03 11:36",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG3New_Terminal_Testing",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/WG3New_Terminal_Testing",
+      "role": "unknown",
+      "remoteModifiedRaw": "2013/10/15 9:41",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG3_BSStesting_&_O&M",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/WG3_BSStesting_%26_O%26M",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 19:16",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG4_Terminal_Testing-Radio_Aspects",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/WG4_Terminal_Testing-Radio_Aspects",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 19:17",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG5_Terminal_Testing-Protocol_Aspects",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_geran/WG5_Terminal_Testing-Protocol_Aspects",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 19:17",
+      "sizeRaw": null,
+      "sizeBytes": null
+    }
+  ]
+}

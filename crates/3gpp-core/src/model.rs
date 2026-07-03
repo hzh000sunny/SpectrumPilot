@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -34,6 +36,7 @@ pub enum DocsState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectoryChild {
     pub name: String,
     pub kind: EntryKind,
@@ -45,6 +48,7 @@ pub struct DirectoryChild {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectoryManifest {
     pub schema_version: u32,
     pub record_type: String,
@@ -57,6 +61,7 @@ pub struct DirectoryManifest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MeetingRecord {
     pub schema_version: u32,
     pub record_type: String,
@@ -84,6 +89,7 @@ impl MeetingRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TDocKey {
     pub key: String,
     pub prefix: String,
@@ -92,6 +98,7 @@ pub struct TDocKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileClassification {
     pub is_primary_tdoc: bool,
     pub is_zip: bool,
@@ -99,6 +106,7 @@ pub struct FileClassification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileRecord {
     pub schema_version: u32,
     pub record_type: String,
@@ -125,5 +133,77 @@ impl FileRecord {
         let mut hasher = Sha256::new();
         hasher.update(canonical_url.as_bytes());
         format!("file-url-sha256:{:x}", hasher.finalize())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TDocMeetingRecordShard {
+    pub schema_version: u32,
+    pub record_type: String,
+    pub work_group_code: String,
+    pub meeting_slug: String,
+    pub docs_url: String,
+    pub checked_at: String,
+    pub files: Vec<FileRecord>,
+}
+
+impl TDocMeetingRecordShard {
+    pub fn from_records(
+        work_group_code: impl Into<String>,
+        meeting_slug: impl Into<String>,
+        docs_url: impl Into<String>,
+        checked_at: impl Into<String>,
+        mut files: Vec<FileRecord>,
+    ) -> Self {
+        files.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+        Self {
+            schema_version: 1,
+            record_type: "tdoc-meeting-records".to_string(),
+            work_group_code: work_group_code.into(),
+            meeting_slug: meeting_slug.into(),
+            docs_url: docs_url.into(),
+            checked_at: checked_at.into(),
+            files,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TDocIndexEntry {
+    pub tdoc: String,
+    pub file_name: String,
+    pub url: String,
+    pub work_group_code: String,
+    pub meeting_slug: String,
+    pub record_shard: String,
+    pub remote_modified_raw: Option<String>,
+    pub size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TDocIndexShard {
+    pub schema_version: u32,
+    pub record_type: String,
+    pub prefix: String,
+    pub year: u32,
+    pub items: BTreeMap<String, TDocIndexEntry>,
+}
+
+impl TDocIndexShard {
+    pub fn new(prefix: impl Into<String>, year: u32, entries: Vec<TDocIndexEntry>) -> Self {
+        let items = entries
+            .into_iter()
+            .map(|entry| (entry.tdoc.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
+        Self {
+            schema_version: 1,
+            record_type: "tdoc-lookup-index".to_string(),
+            prefix: prefix.into(),
+            year,
+            items,
+        }
     }
 }

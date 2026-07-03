@@ -1,1 +1,19 @@
 .superpowers/
+
+# Rust
+/target/
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Local logs and screenshots
+*.log
+/tmp/
+apps/desktop/tmp/
+
+# OS/editor noise
+.DS_Store
+.idea/

@@ -1,6 +1,7 @@
 use spectrum_3gpp_core::model::{FileRecord, MeetingRecord};
 use spectrum_3gpp_core::normalize::{
-    infer_work_group, parse_meeting_slug, parse_size_bytes, parse_tdoc_key,
+    infer_tdoc_sources, infer_work_group, normalize_tdoc_query, parse_meeting_slug,
+    parse_size_bytes, parse_tdoc_key,
 };
 
 #[test]
@@ -75,6 +76,8 @@ fn parses_other_real_tdoc_families() {
         ("S1-261026.zip", "S1-261026", "S1", "261026", Some(2026)),
         ("S4-260036.zip", "S4-260036", "S4", "260036", Some(2026)),
         ("C6-180102.zip", "C6-180102", "C6", "180102", Some(2018)),
+        ("T2-000599.zip", "T2-000599", "T2", "000599", Some(2000)),
+        ("N3-000553.zip", "N3-000553", "N3", "000553", Some(2000)),
     ];
 
     for (input, key, prefix, number_text, year_hint) in cases {
@@ -98,4 +101,30 @@ fn rejects_non_tdoc_filenames() {
     assert_eq!(parse_tdoc_key("WG1-12345.zip"), None);
     assert_eq!(parse_tdoc_key("RAN2-12345.zip"), None);
     assert_eq!(parse_tdoc_key("ABC-12345.zip"), None);
+}
+
+#[test]
+fn normalizes_user_tdoc_queries() {
+    let key = normalize_tdoc_query("  r2-2601401.zip  ").expect("tdoc query");
+
+    assert_eq!(key.key, "R2-2601401");
+    assert_eq!(key.prefix, "R2");
+    assert_eq!(key.number_text, "2601401");
+    assert_eq!(key.year_hint, Some(2026));
+}
+
+#[test]
+fn infers_likely_source_branch_from_tdoc_prefix() {
+    let key = normalize_tdoc_query("R2-2601401").expect("tdoc query");
+    let sources = infer_tdoc_sources(&key);
+
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].root, "tsg_ran");
+    assert_eq!(sources[0].work_group_path, "WG2_RL2");
+    assert_eq!(sources[0].work_group_code, "RAN2");
+    assert_eq!(
+        sources[0].work_group_url,
+        "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/"
+    );
+    assert_eq!(sources[0].meeting_series_prefix, "TSGR2");
 }

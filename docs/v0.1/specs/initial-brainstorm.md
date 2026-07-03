@@ -52,7 +52,7 @@ The UI should resemble a management console:
 - Top navigation bar for context and global actions.
 - Main workspace changes when the user selects a sidebar item.
 - First active pages should focus on 3GPP.
-- Future AI capabilities can appear as reserved navigation areas but should not be active in v0.1.
+- Future AI capabilities should not appear as v0.1 navigation items or placeholders.
 
 ## Technology Direction
 
@@ -73,7 +73,7 @@ Windows 10 and Windows 11 are the target platforms. It is acceptable for the ins
 
 ## First Active Module
 
-The first active module should be 3GPP because it is useful and does not require AI.
+The first active module should be `3GPP Ftp` because it is useful and does not require AI.
 
 Initial 3GPP feature areas:
 

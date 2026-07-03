@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "recordType": "directory-manifest",
+  "url": "https://www.3gpp.org/ftp/tsg_cn/",
+  "pathSegments": [
+    "tsg_cn"
+  ],
+  "directoryRole": "root",
+  "checkedAt": "2026-07-01T06:59:59.752971622+00:00",
+  "childFingerprint": "sha256:01f1f0f8b39b708f041b8dfa39e5c99a1985a05e73ea8ef95fc7396d28461584",
+  "children": [
+    {
+      "name": "AH_ITU-T",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/AH_ITU-T",
+      "role": "unknown",
+      "remoteModifiedRaw": "2014/08/28 13:26",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "Joint_Meetings",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/Joint_Meetings",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:40",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "OSA",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/OSA",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:40",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "TSG_CN",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/TSG_CN",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:43",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG1_mm-cc-sm",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/WG1_mm-cc-sm",
+      "role": "unknown",
+      "remoteModifiedRaw": "2019/07/10 15:50",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG2_camel",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/WG2_camel",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:49",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG3_interworking",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/WG3_interworking",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:51",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG4_protocollars",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/WG4_protocollars",
+      "role": "unknown",
+      "remoteModifiedRaw": "2014/08/28 13:01",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG5_osa",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_cn/WG5_osa",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 18:54",
+      "sizeRaw": null,
+      "sizeBytes": null
+    }
+  ]
+}

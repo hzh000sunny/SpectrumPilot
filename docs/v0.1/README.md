@@ -5,7 +5,7 @@
 | Version | v0.1 |
 | Start Date | 2026-06-30 |
 | Status | Draft |
-| Theme | Product foundation and 3GPP-first MVP |
+| Theme | Product foundation, complete 3GPP Ftp workflow, installer, and updater |
 
 ## Directory Structure
 
@@ -17,7 +17,10 @@ v0.1/
 ├── design/
 │   ├── overview.md
 │   ├── runtime-layout.md
-│   └── 3gpp-local-index.md
+│   ├── 3gpp-local-index.md
+│   └── 3gpp-fast-lookup-download.md
+├── features/
+│   └── 3gpp-search-download.md
 ├── plans/
 │   └── README.md
 └── specs/
@@ -30,14 +33,16 @@ v0.1/
 |---|---|---|
 | Understand the product | `prd/spectrumpilot.md` | `design/overview.md` |
 | Understand architecture | `design/overview.md` | `design/runtime-layout.md`, `design/3gpp-local-index.md` |
+| Understand the implemented 3GPP slice | `features/3gpp-search-download.md` | `design/3gpp-local-index.md` |
+| Understand the next 3GPP workflow upgrade | `design/3gpp-fast-lookup-download.md` | `features/3gpp-search-download.md` |
 | Understand early decisions | `specs/initial-brainstorm.md` | `prd/spectrumpilot.md` |
 | Prepare implementation | `prd/spectrumpilot.md` | `design/overview.md`, then future implementation plans |
 
 ## Version Scope
 
-v0.1 establishes the application identity, desktop delivery model, management-console UI direction, technology stack, and first implementation area.
+v0.1 establishes the application identity, desktop delivery model, management-console UI direction, technology stack, complete 3GPP Ftp workflow, and install/update path.
 
-The first implementation area is the 3GPP workflow because it can be built without LLM configuration and can reuse or replace the existing proposal-number-based downloader.
+The first implementation area is the 3GPP Ftp workflow because it can be built without LLM configuration and can reuse or replace the existing proposal-number-based downloader.
 
 ## Current Decisions
 
@@ -49,13 +54,15 @@ The first implementation area is the 3GPP workflow because it can be built witho
 | Delivery model | Desktop installer, not web deployment |
 | Primary stack | Tauri 2, React, TypeScript, Rust, SQLite |
 | UI style | Management-console style with sidebar navigation and top bar |
-| v0.1 functional focus | 3GPP proposal and TDoc workflows |
+| v0.1 functional focus | Complete 3GPP Ftp workflow, desktop framework, Windows installer, and updater |
 | AI scope | Future, not v0.1 |
 
 The 3GPP design work now splits search into two modes:
 
 - foreground user queries should return as fast as possible and may search in parallel
 - background index refresh should stay incremental, conservative, and low-volume
+
+The shipped product also uses a bundled seed catalog so first launch does not require the user to initialize anything manually.
 
 ## PRD vs Design
 

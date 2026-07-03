@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "recordType": "directory-manifest",
+  "url": "https://www.3gpp.org/ftp/tsg_ran/",
+  "pathSegments": [
+    "tsg_ran"
+  ],
+  "directoryRole": "root",
+  "checkedAt": "2026-07-01T06:59:59.752971622+00:00",
+  "childFingerprint": "sha256:0f1294ef009e56abf46458a1d5d5faea49be83016a7bc75250c2b5a554755c8a",
+  "children": [
+    {
+      "name": "AHG1_ITU_Coord",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/AHG1_ITU_Coord",
+      "role": "unknown",
+      "remoteModifiedRaw": "2026/06/18 11:43",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "TSG_RAN",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/TSG_RAN",
+      "role": "unknown",
+      "remoteModifiedRaw": "2026/06/16 11:20",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG1_RL1",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG1_RL1",
+      "role": "unknown",
+      "remoteModifiedRaw": "2026/01/16 8:59",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG2_RL2",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2",
+      "role": "unknown",
+      "remoteModifiedRaw": "2026/03/18 8:13",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG3_Iu",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG3_Iu",
+      "role": "unknown",
+      "remoteModifiedRaw": "2025/07/22 14:39",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG4_Radio",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG4_Radio",
+      "role": "unknown",
+      "remoteModifiedRaw": "2025/07/22 15:27",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG5_Test_ex-T1",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG5_Test_ex-T1",
+      "role": "unknown",
+      "remoteModifiedRaw": "2026/06/01 15:53",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WG6_legacyRAN",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WG6_legacyRAN",
+      "role": "unknown",
+      "remoteModifiedRaw": "2020/04/07 13:29",
+      "sizeRaw": null,
+      "sizeBytes": null
+    },
+    {
+      "name": "WGs_LongTermEvolution",
+      "kind": "directory",
+      "url": "https://www.3gpp.org/ftp/tsg_ran/WGs_LongTermEvolution",
+      "role": "unknown",
+      "remoteModifiedRaw": "2008/11/04 20:08",
+      "sizeRaw": null,
+      "sizeBytes": null
+    }
+  ]
+}

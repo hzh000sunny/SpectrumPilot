@@ -2,11 +2,11 @@
 
 ## Current Version
 
-[**v0.1**](./v0.1/) — Product foundation and 3GPP-first MVP planning. Status: Draft.
+[**v0.1**](./v0.1/) — Product foundation, complete 3GPP Ftp workflow, Windows installer, and updater. Status: Draft.
 
 ## Future Planning
 
-[**future/**](./future/) — Long-term capabilities that are not part of the first implementation scope, including AI-assisted evidence search, patent disclosure drafting, and PPT generation.
+[**future/**](./future/) — Long-term capabilities that are not part of v0.1, including AI-assisted evidence search, patent disclosure drafting, and PPT generation.
 
 ## Project-Level Rules
 
@@ -36,6 +36,8 @@ docs/
     │   ├── overview.md
     │   ├── runtime-layout.md
     │   └── 3gpp-local-index.md
+    ├── features/
+    │   └── 3gpp-search-download.md
     ├── plans/
     │   └── README.md
     └── specs/
@@ -46,6 +48,7 @@ Useful starting points:
 
 - `v0.1/design/overview.md` for the main architecture
 - `v0.1/design/runtime-layout.md` for runtime file placement
+- `v0.1/features/3gpp-search-download.md` for current 3GPP Ftp behavior
 - `v0.1/design/3gpp-local-index.md` for the 3GPP search and indexing strategy
 
 ## Key Principles
@@ -54,4 +57,5 @@ Useful starting points:
 - Keep PRD documents focused on product contract: who, why, what, and what is out of scope.
 - Keep design documents focused on implementation shape: architecture, component boundaries, data flow, packaging, and testing.
 - Keep future planning outside version directories until a capability enters an actual release scope.
+- Keep AI-assisted research, patent drafting, PPT generation, and LLM settings out of v0.1 implementation and navigation.
 - Product UI text, project name, executable name, installation name, and public-facing documentation should be English-first.

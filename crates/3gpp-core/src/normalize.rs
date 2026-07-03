@@ -1,6 +1,15 @@
 use crate::model::TDocKey;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TDocSource {
+    pub root: String,
+    pub work_group_path: String,
+    pub work_group_code: String,
+    pub work_group_url: String,
+    pub meeting_series_prefix: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMeetingSlug {
     pub series: Option<String>,
     pub number: Option<u32>,
@@ -35,12 +44,18 @@ pub fn parse_size_bytes(raw: &str) -> Option<u64> {
 }
 
 pub fn parse_tdoc_key(file_name: &str) -> Option<TDocKey> {
-    let stem = file_name.strip_suffix(".zip").unwrap_or(file_name);
+    let trimmed = file_name.trim();
+    let stem = if trimmed.to_ascii_lowercase().ends_with(".zip") {
+        trimmed.get(..trimmed.len().saturating_sub(4))?
+    } else {
+        trimmed
+    };
     let (prefix, number_text) = stem.split_once('-')?;
+    let prefix = prefix.to_ascii_uppercase();
     if prefix.is_empty() || number_text.is_empty() {
         return None;
     }
-    if !is_likely_tdoc_prefix(prefix) {
+    if !is_likely_tdoc_prefix(&prefix) {
         return None;
     }
     if !matches!(number_text.len(), 5..=7) || !number_text.chars().all(|c| c.is_ascii_digit()) {
@@ -53,19 +68,46 @@ pub fn parse_tdoc_key(file_name: &str) -> Option<TDocKey> {
 
     Some(TDocKey {
         key: format!("{prefix}-{number_text}"),
-        prefix: prefix.to_string(),
+        prefix,
         number_text: number_text.to_string(),
         year_hint,
     })
 }
 
+pub fn normalize_tdoc_query(query: &str) -> Option<TDocKey> {
+    parse_tdoc_key(query)
+}
+
+pub fn infer_tdoc_sources(tdoc: &TDocKey) -> Vec<TDocSource> {
+    crate::tdoc::source_for_tdoc_prefix(&tdoc.prefix)
+        .into_iter()
+        .collect()
+}
+
 fn is_likely_tdoc_prefix(prefix: &str) -> bool {
-    matches!(
-        prefix,
-        "CP" | "GP" | "NP" | "RP" | "SP" | "TP" | "R1" | "R2" | "R3" | "R4" | "R5" | "R6"
-            | "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "C1" | "C2" | "C3" | "C4" | "C5"
-            | "C6"
-    )
+    match prefix {
+        "CP" | "GP" | "NP" | "RP" | "SP" | "TP" => true,
+        _ => {
+            let bytes = prefix.as_bytes();
+            if bytes.len() != 2 {
+                return false;
+            }
+
+            let family = bytes[0];
+            let number = bytes[1];
+            if !number.is_ascii_digit() {
+                return false;
+            }
+
+            let digit = number - b'0';
+            match family {
+                b'R' | b'S' | b'C' => (1..=6).contains(&digit),
+                b'T' => (1..=3).contains(&digit),
+                b'N' => (1..=5).contains(&digit),
+                _ => false,
+            }
+        }
+    }
 }
 
 pub fn parse_meeting_slug(slug: &str) -> ParsedMeetingSlug {

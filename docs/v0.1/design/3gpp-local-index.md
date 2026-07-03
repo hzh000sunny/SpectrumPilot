@@ -28,13 +28,14 @@ The module should:
 - keep background refresh polite and low-volume
 - make user-triggered online search as fast as practical when the local index misses
 - support direct download once the target URL is known
-- keep the implementation compatible with future AI-assisted research features
+- keep the 3GPP data model stable enough for future product modules to consume
 
 ## 3. Non-Goals
 
 This design does not try to:
 
 - mirror the full 3GPP site
+- implement non-3GPP research workflows
 - build LLM-based evidence analysis
 - generate patent disclosures
 - generate PPT decks
@@ -356,7 +357,7 @@ Use these identity rules consistently:
 | Work group | `workgroup:<root>/<workGroupPath>` |
 | Meeting | `meeting:<root>/<workGroupPath>/<meetingSlug>` |
 | File | `file-url-sha256:<hash(canonicalUrl)>` |
-| Directory manifest | `dir-url-sha256:<hash(directoryUrl)>` |
+| Directory manifest file | `<sha256(directoryUrl)>.json` |
 
 TDoc numbers such as `R2-2601401` are search keys, not primary IDs.
 
@@ -627,10 +628,13 @@ Integration tests should use recorded fixtures or mocked HTTP responses so that 
 These items can be finalized during implementation:
 
 - whether the first index pass should use JSON only or JSON plus SQLite search tables
-- whether a warm-start seed list should be hardcoded or generated from a bootstrap crawl
 - whether a nightly refresh is needed at v0.1 or only an hourly hot refresh plus on-demand refreshes
-- how far back the default recent-year bootstrap should go
 - whether a full historical backfill should be optional, hidden behind an advanced setting, or deferred entirely
+
+Resolved during the initial desktop slice:
+
+- The app ships a staged bundled seed catalog generated during development or release stabilization. It is not fetched by every user and is not generated automatically on every build.
+- The default coverage starts with recent, high-value `tsg_` branches. Full historical coverage remains a separate backfill task.
 
 ## 21. Implementation Boundary
 
