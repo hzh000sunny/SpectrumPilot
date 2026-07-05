@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::compact::read_compact_summary;
 use crate::error::{GppError, Result};
 use crate::model::{
-    DirectoryManifest, FileRecord, SpecArchiveRecord, TDocIndexShard, TDocMeetingRecordShard,
+    DirectoryManifest, FileRecord, LookupHistoryRecord, SpecArchiveRecord, TDocIndexShard,
+    TDocMeetingRecordShard,
 };
 
 #[derive(Debug, Clone)]
@@ -128,6 +131,10 @@ pub fn spec_archive_record_path(paths: &CatalogPaths, spec_number: &str) -> Path
         ))
 }
 
+pub fn lookup_history_path(paths: &CatalogPaths) -> PathBuf {
+    paths.root().join("history").join("lookups.jsonl")
+}
+
 pub fn tdoc_meeting_shard_path(
     paths: &CatalogPaths,
     work_group_code: &str,
@@ -234,6 +241,58 @@ pub fn read_spec_archive_record(
         source,
     })?;
     Ok(Some(serde_json::from_slice(&body)?))
+}
+
+pub fn append_lookup_history_record(
+    paths: &CatalogPaths,
+    record: &LookupHistoryRecord,
+) -> Result<PathBuf> {
+    paths.ensure_dirs()?;
+    let path = lookup_history_path(paths);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| GppError::Io {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|source| GppError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    let body = serde_json::to_string(record)?;
+    writeln!(file, "{body}").map_err(|source| GppError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(path)
+}
+
+pub fn read_lookup_history_records(
+    paths: &CatalogPaths,
+    limit: usize,
+) -> Result<Vec<LookupHistoryRecord>> {
+    paths.ensure_dirs()?;
+    let path = lookup_history_path(paths);
+    if limit == 0 || !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let body = fs::read_to_string(&path).map_err(|source| GppError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let mut records = Vec::new();
+    for line in body.lines().filter(|line| !line.trim().is_empty()) {
+        records.push(serde_json::from_str::<LookupHistoryRecord>(line)?);
+    }
+    records.reverse();
+    records.truncate(limit);
+    Ok(records)
 }
 
 pub fn write_file_records(paths: &CatalogPaths, records: &[FileRecord]) -> Result<Vec<PathBuf>> {

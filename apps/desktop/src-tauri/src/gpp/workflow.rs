@@ -4,17 +4,17 @@ use std::time::Duration;
 use chrono::Utc;
 use serde::Deserialize;
 use spectrumpilot_3gpp_core::catalog::{
-    merge_tdoc_index_shard, read_file_records, read_spec_archive_record, read_tdoc_index_shard,
-    write_file_records, write_manifest, write_spec_archive_record, write_tdoc_meeting_shard,
-    CatalogPaths,
+    append_lookup_history_record, merge_tdoc_index_shard, read_file_records,
+    read_spec_archive_record, read_tdoc_index_shard, write_file_records, write_manifest,
+    write_spec_archive_record, write_tdoc_meeting_shard, CatalogPaths,
 };
 use spectrumpilot_3gpp_core::compact::resolve_tdoc_from_compact_catalog;
 use spectrumpilot_3gpp_core::index::{
     build_tdoc_index_shards, resolve_tdoc_from_index_shard, TDocLookupIndex,
 };
 use spectrumpilot_3gpp_core::model::{
-    DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, SpecArchiveRecord,
-    TDocKey, TDocMeetingRecordShard,
+    DirectoryRole, EntryKind, FileClassification, FileRecord, LookupHistoryRecord, MeetingRecord,
+    SpecArchiveRecord, TDocKey, TDocMeetingRecordShard,
 };
 use spectrumpilot_3gpp_core::normalize::TDocSource;
 use spectrumpilot_3gpp_core::query::{
@@ -622,7 +622,7 @@ async fn download_extract_open(
                 Some(100),
                 searched_url_count,
             );
-            return Ok(GppLookupComplete {
+            let complete = GppLookupComplete {
                 job_id: job_id.to_string(),
                 query: request.query.clone(),
                 source_url: target.source_url,
@@ -631,7 +631,9 @@ async fn download_extract_open(
                 opened_path,
                 cache_status: "cached_document".to_string(),
                 message: cached_message,
-            });
+            };
+            append_lookup_history(app, &complete);
+            return Ok(complete);
         }
         LocalDownloadCache::ZipOnly => {
             emit_progress(
@@ -695,7 +697,7 @@ async fn download_extract_open(
         searched_url_count,
     );
 
-    Ok(GppLookupComplete {
+    let complete = GppLookupComplete {
         job_id: job_id.to_string(),
         query: request.query.clone(),
         source_url: target.source_url,
@@ -704,7 +706,9 @@ async fn download_extract_open(
         opened_path,
         cache_status: cache_status.to_string(),
         message: target.message,
-    })
+    };
+    append_lookup_history(app, &complete);
+    Ok(complete)
 }
 
 fn classify_local_download_cache(
@@ -721,6 +725,32 @@ fn classify_local_download_cache(
         Ok(LocalDownloadCache::ZipOnly)
     } else {
         Ok(LocalDownloadCache::Missing)
+    }
+}
+
+fn append_lookup_history(app: &AppHandle, complete: &GppLookupComplete) {
+    let Ok(paths) = crate::app_catalog_paths(app) else {
+        return;
+    };
+    let record = lookup_history_record_from_complete(complete, &Utc::now().to_rfc3339());
+    let _ = append_lookup_history_record(&paths, &record);
+}
+
+fn lookup_history_record_from_complete(
+    complete: &GppLookupComplete,
+    completed_at: &str,
+) -> LookupHistoryRecord {
+    LookupHistoryRecord {
+        schema_version: 1,
+        record_type: "lookup-history".to_string(),
+        query: complete.query.clone(),
+        source_url: complete.source_url.clone(),
+        zip_path: complete.zip_path.clone(),
+        extracted_path: complete.extracted_path.clone(),
+        opened_path: complete.opened_path.clone(),
+        cache_status: complete.cache_status.clone(),
+        message: complete.message.clone(),
+        completed_at: completed_at.to_string(),
     }
 }
 
@@ -1054,10 +1084,12 @@ mod tests {
     use spectrumpilot_3gpp_core::tdoc::source_for_tdoc_prefix;
 
     use super::super::download::{download_zip, extract_zip, resolve_open_path, tdoc_extract_dir};
+    use super::super::jobs::GppLookupComplete;
     use super::{
         cached_spec_archive_target, classify_local_download_cache, is_successful_exact_probe,
-        probe_exact_file, requested_min_meeting_number, resolve_indexed_contribution_record,
-        write_tdoc_shards_for_records, GppLookupRequest, LocalDownloadCache,
+        lookup_history_record_from_complete, probe_exact_file, requested_min_meeting_number,
+        resolve_indexed_contribution_record, write_tdoc_shards_for_records, GppLookupRequest,
+        LocalDownloadCache,
     };
 
     #[test]
@@ -1281,6 +1313,35 @@ mod tests {
             "https://www.3gpp.org/ftp/Specs/archive/38_series/38.321/38321-j30.zip"
         );
         assert!(target.extract_dir.ends_with("3gpp/specs/38.321/j30"));
+    }
+
+    #[test]
+    fn lookup_history_record_captures_completed_lookup_for_library() {
+        let complete = GppLookupComplete {
+            job_id: "job-1".to_string(),
+            query: "R2-2601401".to_string(),
+            source_url: "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip"
+                .to_string(),
+            zip_path:
+                "C:/SpectrumPilotWorkspace/3gpp/tdocs/RAN2/TSGR2_133bis/R2-2601401/R2-2601401.zip"
+                    .to_string(),
+            extracted_path: "C:/SpectrumPilotWorkspace/3gpp/tdocs/RAN2/TSGR2_133bis/R2-2601401"
+                .to_string(),
+            opened_path: Some(
+                "C:/SpectrumPilotWorkspace/3gpp/tdocs/RAN2/TSGR2_133bis/R2-2601401/R2-2601401.docx"
+                    .to_string(),
+            ),
+            cache_status: "downloaded".to_string(),
+            message: "Downloaded and extracted R2-2601401.".to_string(),
+        };
+
+        let record = lookup_history_record_from_complete(&complete, "2026-07-04T08:00:00Z");
+
+        assert_eq!(record.query, "R2-2601401");
+        assert_eq!(record.cache_status, "downloaded");
+        assert_eq!(record.zip_path, complete.zip_path);
+        assert_eq!(record.opened_path, complete.opened_path);
+        assert_eq!(record.completed_at, "2026-07-04T08:00:00Z");
     }
 
     #[tokio::test]

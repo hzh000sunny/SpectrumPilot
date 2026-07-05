@@ -9,16 +9,17 @@ use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spectrumpilot_3gpp_core::catalog::{
-    manifest_path_for_url, merge_tdoc_index_shard, read_file_records, summarize_catalog,
-    write_file_records, write_json_atomic, write_manifest, write_tdoc_meeting_shard, CatalogPaths,
-    CatalogSummary,
+    manifest_path_for_url, merge_tdoc_index_shard, read_file_records, read_lookup_history_records,
+    summarize_catalog, write_file_records, write_json_atomic, write_manifest,
+    write_tdoc_meeting_shard, CatalogPaths, CatalogSummary,
 };
 use spectrumpilot_3gpp_core::index::{build_tdoc_index_shards, TDocLookupIndex};
 use spectrumpilot_3gpp_core::manifest::{
     build_manifest_from_html, file_records_from_docs_manifest,
 };
 use spectrumpilot_3gpp_core::model::{
-    DirectoryChild, DirectoryManifest, DirectoryRole, EntryKind, FileRecord, TDocMeetingRecordShard,
+    DirectoryChild, DirectoryManifest, DirectoryRole, EntryKind, FileRecord, LookupHistoryRecord,
+    TDocMeetingRecordShard,
 };
 use spectrumpilot_3gpp_core::normalize::{
     infer_tdoc_sources, normalize_tdoc_query, parse_meeting_slug,
@@ -1874,6 +1875,15 @@ fn gpp_catalog_status(app: AppHandle) -> std::result::Result<GppCatalogStatus, S
 }
 
 #[tauri::command]
+fn gpp_lookup_history(
+    app: AppHandle,
+    limit: usize,
+) -> std::result::Result<Vec<LookupHistoryRecord>, String> {
+    let paths = app_catalog_paths(&app)?;
+    read_lookup_history_records(&paths, limit.min(500)).map_err(|source| source.to_string())
+}
+
+#[tauri::command]
 fn set_gpp_background_refresh_enabled(
     app: AppHandle,
     enabled: bool,
@@ -2101,6 +2111,7 @@ pub fn run() {
             runtime_paths,
             set_workspace_root,
             gpp_catalog_status,
+            gpp_lookup_history,
             set_gpp_background_refresh_enabled,
             set_gpp_background_refresh_interval_minutes,
             gpp_refresh_log_tail,

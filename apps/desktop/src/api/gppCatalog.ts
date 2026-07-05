@@ -103,6 +103,19 @@ export type GppLookupComplete = {
   message: string;
 };
 
+export type LookupHistoryRecord = {
+  schemaVersion: number;
+  recordType: string;
+  query: string;
+  sourceUrl: string;
+  zipPath: string;
+  extractedPath: string;
+  openedPath: string | null;
+  cacheStatus: "cached_document" | "cached_zip" | "downloaded" | string;
+  message: string;
+  completedAt: string;
+};
+
 const PREVIEW_STATUS: GppCatalogStatus = {
   catalogRoot: "Preview only",
   manifestCount: 0,
@@ -189,6 +202,14 @@ export async function getGppRefreshLogTail(lineCount = 80): Promise<string[]> {
   }
 
   return invoke<string[]>("gpp_refresh_log_tail", { lineCount });
+}
+
+export async function getGppLookupHistory(limit: number): Promise<LookupHistoryRecord[]> {
+  if (!isTauri()) {
+    return [];
+  }
+
+  return invoke<LookupHistoryRecord[]>("gpp_lookup_history", { limit });
 }
 
 export async function bootstrapGppCatalog(): Promise<GppBootstrapReport> {

@@ -1,11 +1,12 @@
 use spectrum_3gpp_core::catalog::CatalogPaths;
 use spectrum_3gpp_core::catalog::{
-    file_record_path, manifest_path_for_url, read_file_records, read_spec_archive_record,
-    spec_archive_record_path, summarize_catalog, write_file_records, write_manifest,
-    write_spec_archive_record,
+    append_lookup_history_record, file_record_path, manifest_path_for_url, read_file_records,
+    read_lookup_history_records, read_spec_archive_record, spec_archive_record_path,
+    summarize_catalog, write_file_records, write_manifest, write_spec_archive_record,
 };
 use spectrum_3gpp_core::model::{
-    DirectoryManifest, DirectoryRole, FileClassification, FileRecord, SpecArchiveRecord, TDocKey,
+    DirectoryManifest, DirectoryRole, FileClassification, FileRecord, LookupHistoryRecord,
+    SpecArchiveRecord, TDocKey,
 };
 
 #[test]
@@ -201,4 +202,38 @@ fn writes_and_reads_spec_archive_records_by_series_and_spec_number() {
         read_spec_archive_record(&paths, "38.322").expect("missing spec record"),
         None
     );
+}
+
+#[test]
+fn appends_and_reads_lookup_history_newest_first() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let paths = CatalogPaths::new(temp.path());
+    let first = lookup_history_record("R2-2601401", "2026-07-04T08:00:00Z");
+    let second = lookup_history_record("38.321", "2026-07-04T08:01:00Z");
+
+    append_lookup_history_record(&paths, &first).expect("append first");
+    append_lookup_history_record(&paths, &second).expect("append second");
+
+    let records = read_lookup_history_records(&paths, 10).expect("read history");
+    let limited = read_lookup_history_records(&paths, 1).expect("limited history");
+
+    assert_eq!(records, vec![second.clone(), first]);
+    assert_eq!(limited, vec![second]);
+}
+
+fn lookup_history_record(query: &str, completed_at: &str) -> LookupHistoryRecord {
+    LookupHistoryRecord {
+        schema_version: 1,
+        record_type: "lookup-history".to_string(),
+        query: query.to_string(),
+        source_url: format!("https://www.3gpp.org/ftp/{query}.zip"),
+        zip_path: format!("C:/SpectrumPilotWorkspace/3gpp/{query}.zip"),
+        extracted_path: format!("C:/SpectrumPilotWorkspace/3gpp/{query}"),
+        opened_path: Some(format!(
+            "C:/SpectrumPilotWorkspace/3gpp/{query}/{query}.docx"
+        )),
+        cache_status: "downloaded".to_string(),
+        message: format!("Downloaded and extracted {query}."),
+        completed_at: completed_at.to_string(),
+    }
 }

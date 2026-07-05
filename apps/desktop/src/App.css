@@ -543,6 +543,62 @@ body {
   text-transform: uppercase;
 }
 
+.library-section {
+  display: grid;
+  gap: 12px;
+}
+
+.library-table {
+  display: grid;
+  margin-top: 2px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.library-row {
+  display: grid;
+  grid-template-columns:
+    minmax(120px, 0.55fr)
+    minmax(145px, 0.65fr)
+    minmax(150px, 0.6fr)
+    minmax(220px, 1.15fr)
+    minmax(220px, 1fr)
+    minmax(220px, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 9px 12px;
+  border-top: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+.library-row:first-child {
+  border-top: 0;
+}
+
+.library-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-row code {
+  color: #111827;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.library-head {
+  min-height: 38px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .results-row code,
 .path-list code,
 .detail-list code {

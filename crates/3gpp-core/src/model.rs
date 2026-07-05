@@ -149,6 +149,21 @@ pub struct SpecArchiveRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LookupHistoryRecord {
+    pub schema_version: u32,
+    pub record_type: String,
+    pub query: String,
+    pub source_url: String,
+    pub zip_path: String,
+    pub extracted_path: String,
+    pub opened_path: Option<String>,
+    pub cache_status: String,
+    pub message: String,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TDocMeetingRecordShard {
     pub schema_version: u32,
     pub record_type: String,
