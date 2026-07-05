@@ -138,6 +138,17 @@ impl FileRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SpecArchiveRecord {
+    pub schema_version: u32,
+    pub record_type: String,
+    pub spec_number: String,
+    pub archive_url: String,
+    pub checked_at: String,
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TDocMeetingRecordShard {
     pub schema_version: u32,
     pub record_type: String,

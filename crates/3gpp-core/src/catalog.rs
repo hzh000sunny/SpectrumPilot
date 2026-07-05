@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 
 use crate::compact::read_compact_summary;
 use crate::error::{GppError, Result};
-use crate::model::{DirectoryManifest, FileRecord, TDocIndexShard, TDocMeetingRecordShard};
+use crate::model::{
+    DirectoryManifest, FileRecord, SpecArchiveRecord, TDocIndexShard, TDocMeetingRecordShard,
+};
 
 #[derive(Debug, Clone)]
 pub struct CatalogPaths {
@@ -113,6 +115,19 @@ pub fn file_record_path(paths: &CatalogPaths, record: &FileRecord) -> PathBuf {
     ))
 }
 
+pub fn spec_archive_record_path(paths: &CatalogPaths, spec_number: &str) -> PathBuf {
+    paths
+        .records_dir()
+        .join("specs")
+        .join(windows_safe_file_name_component(&spec_series_dir(
+            spec_number,
+        )))
+        .join(format!(
+            "{}.json",
+            windows_safe_file_name_component(spec_number)
+        ))
+}
+
 pub fn tdoc_meeting_shard_path(
     paths: &CatalogPaths,
     work_group_code: &str,
@@ -185,6 +200,32 @@ pub fn read_tdoc_index_shard(
 ) -> Result<Option<TDocIndexShard>> {
     paths.ensure_dirs()?;
     let path = tdoc_index_shard_path(paths, prefix, year);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let body = fs::read(&path).map_err(|source| GppError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(Some(serde_json::from_slice(&body)?))
+}
+
+pub fn write_spec_archive_record(
+    paths: &CatalogPaths,
+    record: &SpecArchiveRecord,
+) -> Result<PathBuf> {
+    paths.ensure_dirs()?;
+    let path = spec_archive_record_path(paths, &record.spec_number);
+    write_json_atomic(&path, record)?;
+    Ok(path)
+}
+
+pub fn read_spec_archive_record(
+    paths: &CatalogPaths,
+    spec_number: &str,
+) -> Result<Option<SpecArchiveRecord>> {
+    paths.ensure_dirs()?;
+    let path = spec_archive_record_path(paths, spec_number);
     if !path.exists() {
         return Ok(None);
     }
@@ -292,6 +333,14 @@ fn stable_dir_id(url: &str) -> String {
 
 fn windows_safe_file_name_component(value: &str) -> String {
     value.replace(':', "-")
+}
+
+fn spec_series_dir(spec_number: &str) -> String {
+    let series = spec_number
+        .split_once('.')
+        .map(|(series, _)| series)
+        .unwrap_or(spec_number);
+    format!("{series}_series")
 }
 
 fn max_timestamp(current: Option<String>, candidate: Option<String>) -> Option<String> {

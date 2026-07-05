@@ -1,3 +1,4 @@
+use crate::model::SpecArchiveRecord;
 use crate::query::SpecificationQuery;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -75,4 +76,12 @@ pub fn select_latest_spec_file(
         })
         .max_by(|left, right| left.0.cmp(&right.0))
         .map(|(_, file)| file)
+}
+
+pub fn select_latest_spec_file_from_archive_record(
+    record: &SpecArchiveRecord,
+    archive_stem: &str,
+    version_prefix: Option<&str>,
+) -> Option<String> {
+    select_latest_spec_file(archive_stem, version_prefix, &record.files)
 }

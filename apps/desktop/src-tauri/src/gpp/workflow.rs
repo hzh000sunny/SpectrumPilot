@@ -4,16 +4,17 @@ use std::time::Duration;
 use chrono::Utc;
 use serde::Deserialize;
 use spectrumpilot_3gpp_core::catalog::{
-    merge_tdoc_index_shard, read_file_records, read_tdoc_index_shard, write_file_records,
-    write_manifest, write_tdoc_meeting_shard, CatalogPaths,
+    merge_tdoc_index_shard, read_file_records, read_spec_archive_record, read_tdoc_index_shard,
+    write_file_records, write_manifest, write_spec_archive_record, write_tdoc_meeting_shard,
+    CatalogPaths,
 };
 use spectrumpilot_3gpp_core::compact::resolve_tdoc_from_compact_catalog;
 use spectrumpilot_3gpp_core::index::{
     build_tdoc_index_shards, resolve_tdoc_from_index_shard, TDocLookupIndex,
 };
 use spectrumpilot_3gpp_core::model::{
-    DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, TDocKey,
-    TDocMeetingRecordShard,
+    DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, SpecArchiveRecord,
+    TDocKey, TDocMeetingRecordShard,
 };
 use spectrumpilot_3gpp_core::normalize::TDocSource;
 use spectrumpilot_3gpp_core::query::{
@@ -22,6 +23,7 @@ use spectrumpilot_3gpp_core::query::{
 use spectrumpilot_3gpp_core::resolver::resolve_tdoc;
 use spectrumpilot_3gpp_core::specs::{
     archive_directory_url, archive_file_name, select_latest_spec_file,
+    select_latest_spec_file_from_archive_record,
 };
 use spectrumpilot_3gpp_core::tdoc::{direct_probe_url, source_for_tdoc_prefix};
 use tauri::{AppHandle, Emitter};
@@ -208,6 +210,24 @@ async fn resolve_specification(
     check_cancelled(token)?;
 
     let archive_url = archive_directory_url(&query);
+    if query.exact_version.is_none() {
+        let catalog_paths = crate::app_catalog_paths(app)?;
+        if let Some((target, searched_url_count)) =
+            cached_spec_archive_target(&catalog_paths, &workspace_root, &query)?
+        {
+            return download_extract_open(
+                app,
+                job_id,
+                token,
+                &request,
+                client,
+                target,
+                searched_url_count,
+            )
+            .await;
+        }
+    }
+
     let (file_name, version, searched_url_count) = if let Some(exact_version) = &query.exact_version
     {
         let file_name = archive_file_name(&query, exact_version);
@@ -238,12 +258,26 @@ async fn resolve_specification(
             &checked_at,
         )
         .await?;
-        let files = manifest
+        let mut files = manifest
             .children
             .iter()
             .filter(|child| child.kind == EntryKind::File)
             .map(|child| child.name.clone())
             .collect::<Vec<_>>();
+        files.sort();
+        if let Ok(paths) = crate::app_catalog_paths(app) {
+            let _ = write_spec_archive_record(
+                &paths,
+                &SpecArchiveRecord {
+                    schema_version: 1,
+                    record_type: "spec-archive-record".to_string(),
+                    spec_number: query.spec_number.clone(),
+                    archive_url: archive_url.clone(),
+                    checked_at: checked_at.clone(),
+                    files: files.clone(),
+                },
+            );
+        }
         let file_name =
             select_latest_spec_file(&query.archive_stem, query.version_prefix.as_deref(), &files)
                 .ok_or_else(|| {
@@ -901,6 +935,42 @@ fn normalize_meeting_hint(series_prefix: &str, hint: &str) -> String {
     }
 }
 
+fn cached_spec_archive_target(
+    paths: &CatalogPaths,
+    workspace_root: &Path,
+    query: &SpecificationQuery,
+) -> LookupResult<Option<(DownloadTarget, usize)>> {
+    let Some(record) =
+        read_spec_archive_record(paths, &query.spec_number).map_err(|source| source.to_string())?
+    else {
+        return Ok(None);
+    };
+    let Some(file_name) = select_latest_spec_file_from_archive_record(
+        &record,
+        &query.archive_stem,
+        query.version_prefix.as_deref(),
+    ) else {
+        return Ok(None);
+    };
+    let version = spec_version_from_file(&query.archive_stem, &file_name)
+        .ok_or_else(|| format!("failed to parse version from {file_name}"))?;
+    let source_url = format!("{}/{}", record.archive_url.trim_end_matches('/'), file_name);
+
+    Ok(Some((
+        DownloadTarget {
+            source_url,
+            zip_file_name: file_name.clone(),
+            extract_dir: spec_extract_dir(workspace_root, &query.spec_number, &version),
+            open_stem: file_name.trim_end_matches(".zip").to_string(),
+            message: format!(
+                "Downloaded and extracted {} {}.",
+                query.spec_number, version
+            ),
+        },
+        0,
+    )))
+}
+
 fn requested_min_meeting_number(
     request: &GppLookupRequest,
     query: &ContributionQuery,
@@ -972,9 +1042,10 @@ fn emit_progress(
 
 #[cfg(test)]
 mod tests {
-    use spectrumpilot_3gpp_core::catalog::CatalogPaths;
+    use spectrumpilot_3gpp_core::catalog::{write_spec_archive_record, CatalogPaths};
     use spectrumpilot_3gpp_core::model::{
-        DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, TDocKey,
+        DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, SpecArchiveRecord,
+        TDocKey,
     };
     use spectrumpilot_3gpp_core::query::{parse_gpp_query, GppQuery};
     use spectrumpilot_3gpp_core::specs::{
@@ -984,8 +1055,8 @@ mod tests {
 
     use super::super::download::{download_zip, extract_zip, resolve_open_path, tdoc_extract_dir};
     use super::{
-        classify_local_download_cache, is_successful_exact_probe, probe_exact_file,
-        requested_min_meeting_number, resolve_indexed_contribution_record,
+        cached_spec_archive_target, classify_local_download_cache, is_successful_exact_probe,
+        probe_exact_file, requested_min_meeting_number, resolve_indexed_contribution_record,
         write_tdoc_shards_for_records, GppLookupRequest, LocalDownloadCache,
     };
 
@@ -1170,6 +1241,46 @@ mod tests {
         let source = source_for_tdoc_prefix("C1").expect("C1 source");
 
         assert_eq!(requested_min_meeting_number(&request, &query, &source), 145);
+    }
+
+    #[test]
+    fn cached_spec_archive_target_resolves_latest_without_listing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path().join("metadata"));
+        let workspace_root = temp.path().join("workspace");
+        write_spec_archive_record(
+            &paths,
+            &SpecArchiveRecord {
+                schema_version: 1,
+                record_type: "spec-archive-record".to_string(),
+                spec_number: "38.321".to_string(),
+                archive_url: "https://www.3gpp.org/ftp/Specs/archive/38_series/38.321/".to_string(),
+                checked_at: "2026-07-04T00:00:00Z".to_string(),
+                files: vec![
+                    "38321-f10.zip".to_string(),
+                    "38321-i90.zip".to_string(),
+                    "38321-j30.zip".to_string(),
+                ],
+            },
+        )
+        .expect("write spec record");
+        let query = match parse_gpp_query("38.321").expect("query") {
+            GppQuery::Specification(query) => query,
+            GppQuery::Contribution(_) => panic!("expected spec query"),
+        };
+
+        let (target, searched_url_count) =
+            cached_spec_archive_target(&paths, &workspace_root, &query)
+                .expect("cached target")
+                .expect("cache hit");
+
+        assert_eq!(searched_url_count, 0);
+        assert_eq!(target.zip_file_name, "38321-j30.zip");
+        assert_eq!(
+            target.source_url,
+            "https://www.3gpp.org/ftp/Specs/archive/38_series/38.321/38321-j30.zip"
+        );
+        assert!(target.extract_dir.ends_with("3gpp/specs/38.321/j30"));
     }
 
     #[tokio::test]

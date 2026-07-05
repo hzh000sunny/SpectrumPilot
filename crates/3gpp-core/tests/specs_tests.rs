@@ -1,6 +1,8 @@
+use spectrum_3gpp_core::model::SpecArchiveRecord;
 use spectrum_3gpp_core::query::{parse_gpp_query, GppQuery};
 use spectrum_3gpp_core::specs::{
-    archive_directory_url, archive_file_name, select_latest_spec_file, SpecVersion,
+    archive_directory_url, archive_file_name, select_latest_spec_file,
+    select_latest_spec_file_from_archive_record, SpecVersion,
 };
 
 #[test]
@@ -47,6 +49,36 @@ fn sorts_and_selects_latest_versions() {
     assert_eq!(
         select_latest_spec_file("38321", Some("f"), &files).as_deref(),
         Some("38321-f20.zip")
+    );
+}
+
+#[test]
+fn selects_latest_spec_from_cached_archive_record() {
+    let record = SpecArchiveRecord {
+        schema_version: 1,
+        record_type: "spec-archive-record".to_string(),
+        spec_number: "38.321".to_string(),
+        archive_url: "https://www.3gpp.org/ftp/Specs/archive/38_series/38.321/".to_string(),
+        checked_at: "2026-07-04T00:00:00Z".to_string(),
+        files: vec![
+            "38321-f10.zip".to_string(),
+            "38321-f20.zip".to_string(),
+            "38321-i90.zip".to_string(),
+            "38321-j30.zip".to_string(),
+        ],
+    };
+
+    assert_eq!(
+        select_latest_spec_file_from_archive_record(&record, "38321", None).as_deref(),
+        Some("38321-j30.zip")
+    );
+    assert_eq!(
+        select_latest_spec_file_from_archive_record(&record, "38321", Some("f")).as_deref(),
+        Some("38321-f20.zip")
+    );
+    assert_eq!(
+        select_latest_spec_file_from_archive_record(&record, "38321", Some("z")).as_deref(),
+        None
     );
 }
 

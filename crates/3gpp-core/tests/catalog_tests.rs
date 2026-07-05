@@ -1,10 +1,11 @@
 use spectrum_3gpp_core::catalog::CatalogPaths;
 use spectrum_3gpp_core::catalog::{
-    file_record_path, manifest_path_for_url, read_file_records, summarize_catalog,
-    write_file_records, write_manifest,
+    file_record_path, manifest_path_for_url, read_file_records, read_spec_archive_record,
+    spec_archive_record_path, summarize_catalog, write_file_records, write_manifest,
+    write_spec_archive_record,
 };
 use spectrum_3gpp_core::model::{
-    DirectoryManifest, DirectoryRole, FileClassification, FileRecord, TDocKey,
+    DirectoryManifest, DirectoryRole, FileClassification, FileRecord, SpecArchiveRecord, TDocKey,
 };
 
 #[test]
@@ -169,4 +170,35 @@ fn file_record_path_uses_windows_safe_file_name() {
         .and_then(|value| value.to_str())
         .expect("file name")
         .contains(':'));
+}
+
+#[test]
+fn writes_and_reads_spec_archive_records_by_series_and_spec_number() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let paths = CatalogPaths::new(temp.path());
+    let record = SpecArchiveRecord {
+        schema_version: 1,
+        record_type: "spec-archive-record".to_string(),
+        spec_number: "38.321".to_string(),
+        archive_url: "https://www.3gpp.org/ftp/Specs/archive/38_series/38.321/".to_string(),
+        checked_at: "2026-07-04T00:00:00Z".to_string(),
+        files: vec!["38321-f10.zip".to_string(), "38321-j30.zip".to_string()],
+    };
+
+    let path = spec_archive_record_path(&paths, "38.321");
+    assert!(path.starts_with(paths.records_dir().join("specs").join("38_series")));
+    assert_eq!(
+        path.file_name().and_then(|value| value.to_str()),
+        Some("38.321.json")
+    );
+
+    write_spec_archive_record(&paths, &record).expect("write spec record");
+    assert_eq!(
+        read_spec_archive_record(&paths, "38.321").expect("read spec record"),
+        Some(record)
+    );
+    assert_eq!(
+        read_spec_archive_record(&paths, "38.322").expect("missing spec record"),
+        None
+    );
 }
