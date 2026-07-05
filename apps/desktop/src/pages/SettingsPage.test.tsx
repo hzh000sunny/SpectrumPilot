@@ -260,6 +260,87 @@ describe("SettingsPage", () => {
     expect(await screen.findAllByText("Disabled")).toHaveLength(2);
   });
 
+  it("updates scheduled refresh interval and shows refresh log tail", async () => {
+    const user = userEvent.setup();
+    const updatedStatus = catalogStatusMock({
+      backgroundRefreshIntervalMinutes: 30,
+      backgroundRefreshState: "succeeded",
+      backgroundRefreshLastRefreshedManifestCount: 4,
+    });
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "app_status") {
+        return Promise.resolve("SpectrumPilot desktop shell is ready");
+      }
+      if (command === "runtime_paths") {
+        return Promise.resolve(runtimePathsMock());
+      }
+      if (command === "gpp_catalog_status") {
+        return Promise.resolve(catalogStatusMock());
+      }
+      if (command === "set_gpp_background_refresh_interval_minutes") {
+        expect(args).toEqual({ intervalMinutes: 30 });
+        return Promise.resolve(updatedStatus);
+      }
+      if (command === "gpp_refresh_log_tail") {
+        expect(args).toEqual({ lineCount: 80 });
+        return Promise.resolve([
+          "2026-07-04T08:00:00Z started manual refresh; interval_minutes=30",
+          "2026-07-04T08:01:00Z succeeded manual refresh; refreshed_manifest_count=4",
+        ]);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<SettingsPage />);
+
+    const intervalInput = await screen.findByRole("spinbutton", { name: "Refresh interval minutes" });
+    await user.clear(intervalInput);
+    await user.type(intervalInput, "30");
+    await user.click(screen.getByRole("button", { name: "Save interval" }));
+    await user.click(screen.getByRole("button", { name: "Show log" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_gpp_background_refresh_interval_minutes", {
+        intervalMinutes: 30,
+      });
+    });
+    expect(await screen.findByText("Every 30 minutes")).toBeInTheDocument();
+    expect(await screen.findByText(/started manual refresh/)).toBeInTheDocument();
+    expect(await screen.findByText(/succeeded manual refresh/)).toBeInTheDocument();
+  });
+
+  it("runs a manual refresh from Settings", async () => {
+    const user = userEvent.setup();
+    const refreshedStatus = catalogStatusMock({
+      backgroundRefreshState: "succeeded",
+      backgroundRefreshLastRefreshedManifestCount: 5,
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "app_status") {
+        return Promise.resolve("SpectrumPilot desktop shell is ready");
+      }
+      if (command === "runtime_paths") {
+        return Promise.resolve(runtimePathsMock());
+      }
+      if (command === "gpp_catalog_status") {
+        return Promise.resolve(catalogStatusMock());
+      }
+      if (command === "run_gpp_background_refresh_once") {
+        return Promise.resolve(refreshedStatus);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<SettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Run now" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("run_gpp_background_refresh_once");
+    });
+    expect(await screen.findByText("5 refreshed manifests")).toBeInTheDocument();
+  });
+
   it("formats machine timestamps before displaying them", async () => {
     const rawSeedGenerated = "2026-07-03T03:36:47.140472378+00:00";
     const rawLastChecked = "2026-07-03T03:37:12.999999999+00:00";

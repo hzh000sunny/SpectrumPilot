@@ -1,4 +1,5 @@
 use std::fs::{self, OpenOptions};
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -34,6 +35,7 @@ static BUNDLED_CATALOG_SEED: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/resources/3gpp/catalog_seed");
 
 const GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES: u64 = 60;
+const GPP_BACKGROUND_REFRESH_MIN_INTERVAL_MINUTES: u64 = 5;
 const GPP_CATALOG_SEED_INSTALL_START_DELAY_SECS: u64 = 3;
 const GPP_BACKGROUND_REFRESH_START_DELAY_SECS: u64 = 15;
 const GPP_BACKGROUND_REFRESH_REQUEST_DELAY_SECS: u64 = 2;
@@ -989,6 +991,121 @@ fn append_background_refresh_log(
         .map_err(|source| format!("failed to write {}: {source}", path.display()))
 }
 
+fn set_background_refresh_interval_minutes(
+    config_dir: &Path,
+    app_log_dir: &Path,
+    interval_minutes: u64,
+) -> std::result::Result<BackgroundRefreshSettings, String> {
+    if interval_minutes < GPP_BACKGROUND_REFRESH_MIN_INTERVAL_MINUTES {
+        return Err(format!(
+            "background refresh interval must be at least {GPP_BACKGROUND_REFRESH_MIN_INTERVAL_MINUTES} minutes"
+        ));
+    }
+
+    let mut settings = read_background_refresh_settings(config_dir)?;
+    settings.interval_minutes = interval_minutes;
+    append_background_refresh_log(
+        app_log_dir,
+        &format!("updated scheduled refresh interval; interval_minutes={interval_minutes}"),
+    )?;
+    write_background_refresh_settings(config_dir, &settings)?;
+    Ok(settings)
+}
+
+fn read_background_refresh_log_tail(
+    app_log_dir: &Path,
+    line_count: usize,
+) -> std::result::Result<Vec<String>, String> {
+    let line_count = line_count.min(200);
+    if line_count == 0 {
+        return Ok(Vec::new());
+    }
+
+    let path = background_refresh_log_path(app_log_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let body = fs::read_to_string(&path)
+        .map_err(|source| format!("failed to read {}: {source}", path.display()))?;
+    let lines = body.lines().map(str::to_string).collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(line_count);
+    Ok(lines[start..].to_vec())
+}
+
+async fn record_background_refresh_run<F>(
+    paths: &CatalogPaths,
+    log_dir: &Path,
+    interval_minutes: u64,
+    trigger: &str,
+    started_at: String,
+    refresh: F,
+) -> std::result::Result<usize, String>
+where
+    F: Future<Output = std::result::Result<usize, String>>,
+{
+    let _ = append_background_refresh_log(
+        log_dir,
+        &format!(
+            "started {trigger} refresh; interval_minutes={interval_minutes}; tracked_roots={}; meeting_window={}",
+            background_refresh_targets().len(),
+            GPP_BACKGROUND_REFRESH_MAX_MEETINGS_PER_WORKGROUP
+        ),
+    );
+    write_background_refresh_status(
+        paths,
+        &BackgroundRefreshStatus {
+            record_type: "3gpp-background-refresh-status".to_string(),
+            state: "running".to_string(),
+            last_started_at: Some(started_at.clone()),
+            last_completed_at: None,
+            last_error: None,
+            last_refreshed_manifest_count: 0,
+        },
+    )?;
+
+    match refresh.await {
+        Ok(refreshed_manifest_count) => {
+            let _ = append_background_refresh_log(
+                log_dir,
+                &format!(
+                    "succeeded {trigger} refresh; refreshed_manifest_count={refreshed_manifest_count}"
+                ),
+            );
+            write_background_refresh_status(
+                paths,
+                &BackgroundRefreshStatus {
+                    record_type: "3gpp-background-refresh-status".to_string(),
+                    state: "succeeded".to_string(),
+                    last_started_at: Some(started_at),
+                    last_completed_at: Some(Utc::now().to_rfc3339()),
+                    last_error: None,
+                    last_refreshed_manifest_count: refreshed_manifest_count,
+                },
+            )?;
+            Ok(refreshed_manifest_count)
+        }
+        Err(source) => {
+            let _ = append_background_refresh_log(
+                log_dir,
+                &format!("failed {trigger} refresh; error={source}"),
+            );
+            let _ = write_background_refresh_status(
+                paths,
+                &BackgroundRefreshStatus {
+                    record_type: "3gpp-background-refresh-status".to_string(),
+                    state: "failed".to_string(),
+                    last_started_at: Some(started_at),
+                    last_completed_at: None,
+                    last_error: Some(source.clone()),
+                    last_refreshed_manifest_count: 0,
+                },
+            );
+            Err(source)
+        }
+    }
+}
+
 fn default_background_refresh_status() -> BackgroundRefreshStatus {
     BackgroundRefreshStatus {
         record_type: "3gpp-background-refresh-status".to_string(),
@@ -1210,7 +1327,9 @@ fn spawn_background_gpp_catalog_refresh(app: AppHandle) {
             let sleep_minutes = match app_background_refresh_settings(&app) {
                 Ok(settings) => {
                     if settings.enabled {
-                        if let Err(source) = refresh_gpp_root_manifests_for_app(&app).await {
+                        if let Err(source) =
+                            refresh_gpp_root_manifests_for_app(&app, "scheduled").await
+                        {
                             eprintln!("SpectrumPilot 3GPP background refresh failed: {source}");
                         }
                     } else if let Err(source) = skip_disabled_background_refresh_for_app(&app) {
@@ -1287,80 +1406,35 @@ fn skip_disabled_background_refresh_for_app(app: &AppHandle) -> std::result::Res
     append_background_refresh_log(&log_dir, "skipped scheduled refresh; reason=disabled")
 }
 
-async fn refresh_gpp_root_manifests_for_app(app: &AppHandle) -> std::result::Result<usize, String> {
+async fn refresh_gpp_root_manifests_for_app(
+    app: &AppHandle,
+    trigger: &str,
+) -> std::result::Result<usize, String> {
     let paths = app_catalog_paths(app)?;
     let log_dir = app_runtime_layout(app)?.logs_dir;
+    let settings = app_background_refresh_settings(app)?;
     let started_at = Utc::now().to_rfc3339();
-    let _ = append_background_refresh_log(
-        &log_dir,
-        &format!(
-            "started scheduled refresh; interval_minutes={}; tracked_roots={}; meeting_window={}",
-            GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES,
-            background_refresh_targets().len(),
-            GPP_BACKGROUND_REFRESH_MAX_MEETINGS_PER_WORKGROUP
-        ),
-    );
-    write_background_refresh_status(
+
+    record_background_refresh_run(
         &paths,
-        &BackgroundRefreshStatus {
-            record_type: "3gpp-background-refresh-status".to_string(),
-            state: "running".to_string(),
-            last_started_at: Some(started_at.clone()),
-            last_completed_at: None,
-            last_error: None,
-            last_refreshed_manifest_count: 0,
+        &log_dir,
+        settings.interval_minutes,
+        trigger,
+        started_at.clone(),
+        async {
+            match reqwest::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .user_agent("SpectrumPilot/0.1 3GPP background refresh")
+                .build()
+            {
+                Ok(client) => {
+                    refresh_gpp_root_manifests(&paths, &client, &started_at, &log_dir).await
+                }
+                Err(source) => Err(format!("failed to build HTTP client: {source}")),
+            }
         },
-    )?;
-
-    let result = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent("SpectrumPilot/0.1 3GPP background refresh")
-        .build()
-    {
-        Ok(client) => refresh_gpp_root_manifests(&paths, &client, &started_at, &log_dir).await,
-        Err(source) => Err(format!("failed to build HTTP client: {source}")),
-    };
-
-    match result {
-        Ok(refreshed_manifest_count) => {
-            let _ = append_background_refresh_log(
-                &log_dir,
-                &format!(
-                    "succeeded scheduled refresh; refreshed_manifest_count={refreshed_manifest_count}"
-                ),
-            );
-            write_background_refresh_status(
-                &paths,
-                &BackgroundRefreshStatus {
-                    record_type: "3gpp-background-refresh-status".to_string(),
-                    state: "succeeded".to_string(),
-                    last_started_at: Some(started_at),
-                    last_completed_at: Some(Utc::now().to_rfc3339()),
-                    last_error: None,
-                    last_refreshed_manifest_count: refreshed_manifest_count,
-                },
-            )?;
-            Ok(refreshed_manifest_count)
-        }
-        Err(source) => {
-            let _ = append_background_refresh_log(
-                &log_dir,
-                &format!("failed scheduled refresh; error={source}"),
-            );
-            let _ = write_background_refresh_status(
-                &paths,
-                &BackgroundRefreshStatus {
-                    record_type: "3gpp-background-refresh-status".to_string(),
-                    state: "failed".to_string(),
-                    last_started_at: Some(started_at),
-                    last_completed_at: None,
-                    last_error: Some(source.clone()),
-                    last_refreshed_manifest_count: 0,
-                },
-            );
-            Err(source)
-        }
-    }
+    )
+    .await
 }
 
 async fn refresh_gpp_root_manifests(
@@ -1816,6 +1890,37 @@ fn set_gpp_background_refresh_enabled(
 }
 
 #[tauri::command]
+fn set_gpp_background_refresh_interval_minutes(
+    app: AppHandle,
+    interval_minutes: u64,
+) -> std::result::Result<GppCatalogStatus, String> {
+    let layout = app_runtime_layout(&app)?;
+    set_background_refresh_interval_minutes(
+        &layout.config_dir,
+        &layout.logs_dir,
+        interval_minutes,
+    )?;
+    gpp_catalog_status(app)
+}
+
+#[tauri::command]
+fn gpp_refresh_log_tail(
+    app: AppHandle,
+    line_count: usize,
+) -> std::result::Result<Vec<String>, String> {
+    let layout = app_runtime_layout(&app)?;
+    read_background_refresh_log_tail(&layout.logs_dir, line_count)
+}
+
+#[tauri::command]
+async fn run_gpp_background_refresh_once(
+    app: AppHandle,
+) -> std::result::Result<GppCatalogStatus, String> {
+    refresh_gpp_root_manifests_for_app(&app, "manual").await?;
+    gpp_catalog_status(app)
+}
+
+#[tauri::command]
 fn set_workspace_root(
     app: AppHandle,
     workspace_root: String,
@@ -1997,6 +2102,9 @@ pub fn run() {
             set_workspace_root,
             gpp_catalog_status,
             set_gpp_background_refresh_enabled,
+            set_gpp_background_refresh_interval_minutes,
+            gpp_refresh_log_tail,
+            run_gpp_background_refresh_once,
             bootstrap_gpp_catalog,
             search_gpp_tdoc,
             download_gpp_tdoc,
@@ -2026,12 +2134,15 @@ mod tests {
     use super::likely_meeting_filter;
     use super::migrate_runtime_layout;
     use super::read_app_settings;
+    use super::read_background_refresh_log_tail;
     use super::read_background_refresh_settings;
     use super::read_background_refresh_status;
     use super::read_catalog_download_status;
     use super::read_or_create_app_settings;
     use super::recent_meeting_children;
+    use super::record_background_refresh_run;
     use super::search_online_tdoc;
+    use super::set_background_refresh_interval_minutes;
     use super::sha256_hex;
     use super::should_refresh_manifest_children;
     use super::to_catalog_status;
@@ -2323,6 +2434,24 @@ mod tests {
     }
 
     #[test]
+    fn background_refresh_interval_settings_roundtrip() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        let log_dir = temp.path().join("logs");
+
+        let settings = set_background_refresh_interval_minutes(&config_dir, &log_dir, 15)
+            .expect("set interval");
+        let read = read_background_refresh_settings(&config_dir).expect("read settings");
+        let log = std::fs::read_to_string(background_refresh_log_path(&log_dir)).expect("read log");
+
+        assert_eq!(settings.interval_minutes, 15);
+        assert_eq!(read.interval_minutes, 15);
+        assert!(settings.enabled);
+        assert!(log.contains("updated scheduled refresh interval; interval_minutes=15"));
+        assert!(set_background_refresh_interval_minutes(&config_dir, &log_dir, 4).is_err());
+    }
+
+    #[test]
     fn background_refresh_log_appends_lines_to_log_file() {
         let temp = tempfile::tempdir().expect("tempdir");
 
@@ -2331,6 +2460,53 @@ mod tests {
             std::fs::read_to_string(background_refresh_log_path(temp.path())).expect("read log");
 
         assert!(body.contains("started root refresh"));
+    }
+
+    #[test]
+    fn background_refresh_log_tail_returns_last_requested_lines() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        append_background_refresh_log(temp.path(), "line one").expect("line one");
+        append_background_refresh_log(temp.path(), "line two").expect("line two");
+        append_background_refresh_log(temp.path(), "line three").expect("line three");
+
+        let tail = read_background_refresh_log_tail(temp.path(), 2).expect("tail");
+
+        assert_eq!(tail.len(), 2);
+        assert!(tail[0].contains("line two"));
+        assert!(tail[1].contains("line three"));
+    }
+
+    #[tokio::test]
+    async fn background_refresh_manual_run_records_success_status_with_fixture() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path().join("3gpp"));
+        let log_dir = temp.path().join("logs");
+
+        let refreshed = record_background_refresh_run(
+            &paths,
+            &log_dir,
+            30,
+            "manual",
+            "2026-07-04T08:00:00Z".to_string(),
+            async { Ok(3) },
+        )
+        .await
+        .expect("manual refresh");
+        let status = read_background_refresh_status(&paths)
+            .expect("read status")
+            .expect("status");
+        let log = std::fs::read_to_string(background_refresh_log_path(&log_dir)).expect("read log");
+
+        assert_eq!(refreshed, 3);
+        assert_eq!(status.state, "succeeded");
+        assert_eq!(
+            status.last_started_at,
+            Some("2026-07-04T08:00:00Z".to_string())
+        );
+        assert_eq!(status.last_refreshed_manifest_count, 3);
+        assert!(log.contains("started manual refresh; interval_minutes=30"));
+        assert!(log.contains("succeeded manual refresh; refreshed_manifest_count=3"));
     }
 
     #[test]

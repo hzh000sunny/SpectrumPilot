@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import { Button, Input, Switch, Tag, Typography } from "antd";
 
 import {
+  getGppRefreshLogTail,
   getGppCatalogStatus,
+  runGppBackgroundRefreshOnce,
   setGppBackgroundRefreshEnabled,
+  setGppBackgroundRefreshIntervalMinutes,
   type GppCatalogStatus,
 } from "../api/gppCatalog";
 import { getRuntimeSnapshot, setWorkspaceRoot, type RuntimeSnapshot } from "../api/runtime";
@@ -20,8 +23,13 @@ export function SettingsPage() {
   const [catalogStatus, setCatalogStatus] = useState<GppCatalogStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingRefreshSetting, setSavingRefreshSetting] = useState(false);
+  const [savingRefreshInterval, setSavingRefreshInterval] = useState(false);
+  const [runningRefresh, setRunningRefresh] = useState(false);
+  const [loadingRefreshLog, setLoadingRefreshLog] = useState(false);
   const [savingWorkspaceRoot, setSavingWorkspaceRoot] = useState(false);
   const [workspaceRootDraft, setWorkspaceRootDraft] = useState("");
+  const [refreshIntervalDraft, setRefreshIntervalDraft] = useState("60");
+  const [refreshLogLines, setRefreshLogLines] = useState<string[]>([]);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("gpp");
 
   useEffect(() => {
@@ -50,6 +58,12 @@ export function SettingsPage() {
       setWorkspaceRootDraft(snapshot.paths.workspaceRoot);
     }
   }, [snapshot?.paths.workspaceRoot]);
+
+  useEffect(() => {
+    if (catalogStatus?.backgroundRefreshIntervalMinutes) {
+      setRefreshIntervalDraft(String(catalogStatus.backgroundRefreshIntervalMinutes));
+    }
+  }, [catalogStatus?.backgroundRefreshIntervalMinutes]);
 
   const handleScheduledUpdateChange = async (enabled: boolean) => {
     const previousStatus = catalogStatus;
@@ -95,6 +109,49 @@ export function SettingsPage() {
     }
   };
 
+  const handleRefreshIntervalSave = async () => {
+    const intervalMinutes = Number(refreshIntervalDraft);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5) {
+      setError("Refresh interval must be at least 5 minutes.");
+      return;
+    }
+    setError(null);
+    setSavingRefreshInterval(true);
+    try {
+      const nextStatus = await setGppBackgroundRefreshIntervalMinutes(intervalMinutes);
+      setCatalogStatus(nextStatus);
+    } catch (source: unknown) {
+      setError(source instanceof Error ? source.message : String(source));
+    } finally {
+      setSavingRefreshInterval(false);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setError(null);
+    setRunningRefresh(true);
+    try {
+      const nextStatus = await runGppBackgroundRefreshOnce();
+      setCatalogStatus(nextStatus);
+    } catch (source: unknown) {
+      setError(source instanceof Error ? source.message : String(source));
+    } finally {
+      setRunningRefresh(false);
+    }
+  };
+
+  const handleLoadRefreshLog = async () => {
+    setError(null);
+    setLoadingRefreshLog(true);
+    try {
+      setRefreshLogLines(await getGppRefreshLogTail(80));
+    } catch (source: unknown) {
+      setError(source instanceof Error ? source.message : String(source));
+    } finally {
+      setLoadingRefreshLog(false);
+    }
+  };
+
   return (
     <div className="settings-page">
       <div className="settings-layout">
@@ -125,7 +182,16 @@ export function SettingsPage() {
           {activeSection === "gpp" && (
             <GppSettingsContent
               catalogStatus={catalogStatus}
+              loadingRefreshLog={loadingRefreshLog}
+              onLoadRefreshLog={handleLoadRefreshLog}
+              onManualRefresh={handleManualRefresh}
+              onRefreshIntervalChange={setRefreshIntervalDraft}
+              onRefreshIntervalSave={handleRefreshIntervalSave}
               onScheduledUpdateChange={handleScheduledUpdateChange}
+              refreshIntervalDraft={refreshIntervalDraft}
+              refreshLogLines={refreshLogLines}
+              runningRefresh={runningRefresh}
+              savingRefreshInterval={savingRefreshInterval}
               savingRefreshSetting={savingRefreshSetting}
               snapshot={snapshot}
             />
@@ -233,13 +299,31 @@ function SystemSettingsContent({
 function GppSettingsContent({
   snapshot,
   catalogStatus,
+  loadingRefreshLog,
+  onLoadRefreshLog,
+  onManualRefresh,
+  onRefreshIntervalChange,
+  onRefreshIntervalSave,
   savingRefreshSetting,
   onScheduledUpdateChange,
+  refreshIntervalDraft,
+  refreshLogLines,
+  runningRefresh,
+  savingRefreshInterval,
 }: {
   snapshot: RuntimeSnapshot | null;
   catalogStatus: GppCatalogStatus | null;
+  loadingRefreshLog: boolean;
+  onLoadRefreshLog: () => Promise<void>;
+  onManualRefresh: () => Promise<void>;
+  onRefreshIntervalChange: (value: string) => void;
+  onRefreshIntervalSave: () => Promise<void>;
   savingRefreshSetting: boolean;
   onScheduledUpdateChange: (enabled: boolean) => Promise<void>;
+  refreshIntervalDraft: string;
+  refreshLogLines: string[];
+  runningRefresh: boolean;
+  savingRefreshInterval: boolean;
 }) {
   return (
     <>
@@ -303,6 +387,34 @@ function GppSettingsContent({
             />
           </div>
         </div>
+
+        <div className="scheduled-controls">
+          <label className="interval-editor">
+            <span className="settings-label">Refresh interval</span>
+            <Input
+              aria-label="Refresh interval minutes"
+              min={5}
+              onChange={(event) => onRefreshIntervalChange(event.target.value)}
+              type="number"
+              value={refreshIntervalDraft}
+            />
+          </label>
+          <Button loading={savingRefreshInterval} onClick={onRefreshIntervalSave}>
+            Save interval
+          </Button>
+          <Button loading={runningRefresh} onClick={onManualRefresh} type="primary">
+            Run now
+          </Button>
+          <Button loading={loadingRefreshLog} onClick={onLoadRefreshLog}>
+            Show log
+          </Button>
+        </div>
+
+        {refreshLogLines.length > 0 && (
+          <pre className="refresh-log-tail" aria-label="Refresh log tail">
+            {refreshLogLines.join("\n")}
+          </pre>
+        )}
       </section>
 
       <section className="settings-panel">

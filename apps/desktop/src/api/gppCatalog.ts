@@ -155,6 +155,42 @@ export async function setGppBackgroundRefreshEnabled(
   return invoke<GppCatalogStatus>("set_gpp_background_refresh_enabled", { enabled });
 }
 
+export async function setGppBackgroundRefreshIntervalMinutes(
+  intervalMinutes: number,
+): Promise<GppCatalogStatus> {
+  if (!isTauri()) {
+    return {
+      ...PREVIEW_STATUS,
+      backgroundRefreshIntervalMinutes: intervalMinutes,
+    };
+  }
+
+  return invoke<GppCatalogStatus>("set_gpp_background_refresh_interval_minutes", {
+    intervalMinutes,
+  });
+}
+
+export async function runGppBackgroundRefreshOnce(): Promise<GppCatalogStatus> {
+  if (!isTauri()) {
+    return {
+      ...PREVIEW_STATUS,
+      backgroundRefreshEnabled: true,
+      backgroundRefreshState: "succeeded",
+      backgroundRefreshLastRefreshedManifestCount: 0,
+    };
+  }
+
+  return invoke<GppCatalogStatus>("run_gpp_background_refresh_once");
+}
+
+export async function getGppRefreshLogTail(lineCount = 80): Promise<string[]> {
+  if (!isTauri()) {
+    return ["Preview only: refresh logs are available in the desktop runtime."];
+  }
+
+  return invoke<string[]>("gpp_refresh_log_tail", { lineCount });
+}
+
 export async function bootstrapGppCatalog(): Promise<GppBootstrapReport> {
   if (!isTauri()) {
     return {
