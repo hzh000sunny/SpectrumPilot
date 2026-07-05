@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build a compact 3GPP catalog seed from existing sharded JSON records.
+"""Build a compact 3GPP catalog seed from existing local catalog records.
 
 This script is intentionally offline-only. It reads already fetched
-`records/tdoc/**.json` meeting shards and rewrites them into a compact release
-format with shared meeting paths and small prefix/year lookup shards.
+`records/*.json` legacy TDoc records plus `records/tdoc/**.json` meeting shards
+and rewrites them into a compact release format with shared meeting paths and
+small prefix/year lookup shards.
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ def build_compact_seed(
 ) -> dict[str, Any]:
     source = source.resolve()
     target = target.resolve()
-    if not (source / "records" / "tdoc").exists():
-        raise FileNotFoundError(f"missing source records directory: {source / 'records' / 'tdoc'}")
+    if not (source / "records").exists():
+        raise FileNotFoundError(f"missing source records directory: {source / 'records'}")
     if target.exists():
         if not force:
             raise FileExistsError(f"target already exists: {target}")
@@ -48,8 +49,7 @@ def build_compact_seed(
     record_count = 0
     latest_checked_at: str | None = None
 
-    for shard_path in sorted((source / "records" / "tdoc").rglob("*.json")):
-        shard = read_json(shard_path)
+    for shard_path, shard in collect_meeting_shards(source, generated_at):
         if shard.get("recordType") != "tdoc-meeting-records":
             continue
         work_group_code = require_text(shard, "workGroupCode", shard_path)
@@ -147,6 +147,90 @@ def build_compact_seed(
     )
     write_download_manifest(target, seed_version)
     return summary
+
+
+def collect_meeting_shards(source: Path, generated_at: str) -> list[tuple[Path, dict[str, Any]]]:
+    records_by_id: dict[str, JsonRecord] = {}
+    docs_url_by_group: dict[tuple[str, str], str] = {}
+    checked_at_by_group: dict[tuple[str, str], str] = {}
+
+    for record_path in sorted((source / "records").glob("*.json")):
+        record = read_json(record_path)
+        add_collected_record(
+            records_by_id,
+            docs_url_by_group,
+            checked_at_by_group,
+            record,
+            record_path,
+            fallback_docs_url=record.get("parentDirectoryUrl"),
+            fallback_checked_at=generated_at,
+        )
+
+    for shard_path in sorted((source / "records" / "tdoc").rglob("*.json")):
+        shard = read_json(shard_path)
+        if shard.get("recordType") != "tdoc-meeting-records":
+            continue
+        fallback_docs_url = shard.get("docsUrl")
+        fallback_checked_at = str(shard.get("checkedAt") or generated_at)
+        for record in shard.get("files", []):
+            add_collected_record(
+                records_by_id,
+                docs_url_by_group,
+                checked_at_by_group,
+                record,
+                shard_path,
+                fallback_docs_url=fallback_docs_url,
+                fallback_checked_at=fallback_checked_at,
+            )
+
+    grouped_records: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records_by_id.values():
+        key = (str(record["workGroupCode"]), str(record["meetingSlug"]))
+        grouped_records[key].append(record)
+
+    result: list[tuple[Path, dict[str, Any]]] = []
+    for (work_group_code, meeting_slug), records in sorted(grouped_records.items()):
+        shard = {
+            "schemaVersion": 1,
+            "recordType": "tdoc-meeting-records",
+            "workGroupCode": work_group_code,
+            "meetingSlug": meeting_slug,
+            "docsUrl": docs_url_by_group.get((work_group_code, meeting_slug), ""),
+            "checkedAt": checked_at_by_group.get((work_group_code, meeting_slug), generated_at),
+            "files": sorted(records, key=lambda item: item.get("fileName", "")),
+        }
+        synthetic_path = source / "records" / "tdoc" / work_group_code / f"{meeting_slug}.json"
+        result.append((synthetic_path, shard))
+    return result
+
+
+JsonRecord = dict[str, Any]
+
+
+def add_collected_record(
+    records_by_id: dict[str, JsonRecord],
+    docs_url_by_group: dict[tuple[str, str], str],
+    checked_at_by_group: dict[tuple[str, str], str],
+    record: Any,
+    source_path: Path,
+    *,
+    fallback_docs_url: Any,
+    fallback_checked_at: str,
+) -> None:
+    if not isinstance(record, dict) or not is_primary_tdoc_record(record):
+        return
+    work_group_code = require_text(record, "workGroupCode", source_path)
+    meeting_slug = require_text(record, "meetingSlug", source_path)
+    group_key = (work_group_code, meeting_slug)
+    docs_url = record.get("parentDirectoryUrl") or fallback_docs_url
+    if isinstance(docs_url, str) and docs_url:
+        docs_url_by_group.setdefault(group_key, docs_url)
+    checked_at_by_group[group_key] = max_timestamp(
+        checked_at_by_group.get(group_key),
+        fallback_checked_at,
+    ) or fallback_checked_at
+    record_id = str(record.get("id") or record.get("canonicalUrl") or record.get("fileName"))
+    records_by_id[record_id] = record
 
 
 def read_json(path: Path) -> dict[str, Any]:

@@ -11,23 +11,27 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def sample_record(tdoc: str, size: int) -> dict:
+def sample_record(
+    tdoc: str,
+    size: int,
+    meeting: str = "TSGR2_133bis",
+    year: int = 2026,
+) -> dict:
     file_name = f"{tdoc}.zip"
     canonical_url = (
-        "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/"
-        f"{file_name}"
+        f"https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/{meeting}/Docs/{file_name}"
     )
     return {
         "schemaVersion": 1,
         "recordType": "tdoc-file",
         "id": f"file:{tdoc}",
         "canonicalUrl": canonical_url,
-        "parentDirectoryUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/",
+        "parentDirectoryUrl": f"https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/{meeting}/Docs/",
         "root": "tsg_ran",
         "workGroupPath": "WG2_RL2",
         "workGroupCode": "RAN2",
-        "meetingId": "meeting:tsg_ran/WG2_RL2/TSGR2_133bis",
-        "meetingSlug": "TSGR2_133bis",
+        "meetingId": f"meeting:tsg_ran/WG2_RL2/{meeting}",
+        "meetingSlug": meeting,
         "containerRole": "docs",
         "fileName": file_name,
         "extension": "zip",
@@ -38,7 +42,7 @@ def sample_record(tdoc: str, size: int) -> dict:
             "key": tdoc,
             "prefix": "R2",
             "numberText": tdoc.removeprefix("R2-"),
-            "yearHint": 2026,
+            "yearHint": year,
         },
         "classification": {
             "isPrimaryTdoc": True,
@@ -129,6 +133,54 @@ class BuildCompactSeedTests(unittest.TestCase):
             self.assertIn("compact/records/RAN2.json", manifest_paths)
             self.assertIn("compact/index/R2_26.json", manifest_paths)
             self.assertGreater(manifest["totalSizeBytes"], 0)
+
+    def test_builds_compact_seed_from_legacy_records_and_meeting_shards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "catalog"
+            target = root / "compact-seed"
+            legacy_record = sample_record("R2-2601403", 7000, meeting="TSGR2_134", year=2026)
+            shard_record = sample_record("R2-2601401", 80437, meeting="TSGR2_133bis", year=2026)
+            duplicate_record = sample_record("R2-2601403", 7000, meeting="TSGR2_134", year=2026)
+            write_json(source / "records" / "file-url-sha256-legacy.json", legacy_record)
+            write_json(
+                source / "records" / "tdoc" / "RAN2" / "TSGR2_133bis.json",
+                {
+                    "schemaVersion": 1,
+                    "recordType": "tdoc-meeting-records",
+                    "workGroupCode": "RAN2",
+                    "meetingSlug": "TSGR2_133bis",
+                    "docsUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/",
+                    "checkedAt": "2026-07-04T00:00:00Z",
+                    "files": [shard_record, duplicate_record],
+                },
+            )
+
+            summary = build_compact_seed(
+                source=source,
+                target=target,
+                seed_version="mixed-source-seed",
+                generated_at="2026-07-05T00:00:00Z",
+                scope="mixed legacy and sharded records",
+                force=True,
+            )
+
+            self.assertEqual(summary["recordCount"], 2)
+            self.assertEqual(summary["meetingCount"], 2)
+            self.assertEqual(summary["indexItemCount"], 2)
+
+            records = json.loads(
+                (target / "compact" / "records" / "RAN2.json").read_text(encoding="utf-8")
+            )
+            meetings = {meeting["meetingSlug"]: meeting for meeting in records["meetings"]}
+            self.assertEqual(set(meetings), {"TSGR2_133bis", "TSGR2_134"})
+            self.assertEqual(meetings["TSGR2_134"]["files"][0][3], "R2-2601403")
+
+            index = json.loads(
+                (target / "compact" / "index" / "R2_26.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("R2-2601401", index["items"])
+            self.assertIn("R2-2601403", index["items"])
 
 
 if __name__ == "__main__":
