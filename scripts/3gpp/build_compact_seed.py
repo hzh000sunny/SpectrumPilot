@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -77,7 +78,7 @@ def build_compact_seed(
                     key,
                 ]
             )
-            index_items[(prefix, year)][key] = [work_group_code, meeting_id, file_index]
+            index_items[(prefix, year)].setdefault(key, [work_group_code, meeting_id, file_index])
             record_count += 1
 
         workgroup_meetings[work_group_code].append(
@@ -189,7 +190,9 @@ def collect_meeting_shards(source: Path, generated_at: str) -> list[tuple[Path, 
         grouped_records[key].append(record)
 
     result: list[tuple[Path, dict[str, Any]]] = []
-    for (work_group_code, meeting_slug), records in sorted(grouped_records.items()):
+    for (work_group_code, meeting_slug), records in sorted(
+        grouped_records.items(), key=lambda item: (item[0][0], meeting_sort_key(item[0][1]))
+    ):
         shard = {
             "schemaVersion": 1,
             "recordType": "tdoc-meeting-records",
@@ -302,6 +305,14 @@ def is_primary_tdoc_record(record: dict[str, Any]) -> bool:
 
 def safe_component(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
+
+
+def meeting_sort_key(meeting_slug: str) -> tuple[str, int, int, str]:
+    match = re.search(r"_(\d+)", meeting_slug)
+    meeting_number = int(match.group(1)) if match else -1
+    suffix = meeting_slug[match.end() :] if match else meeting_slug
+    suffix_rank = 0 if not suffix or suffix.startswith("_") else 1
+    return (meeting_slug[: match.start()] if match else meeting_slug, meeting_number, suffix_rank, meeting_slug)
 
 
 def max_timestamp(current: str | None, candidate: str | None) -> str | None:

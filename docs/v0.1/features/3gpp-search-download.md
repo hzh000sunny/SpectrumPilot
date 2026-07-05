@@ -61,6 +61,8 @@ python3 scripts/3gpp/build_compact_seed.py \
 
 This command is not intended to run during every build or every CI job. Near a release boundary, the project should first refresh or backfill the local catalog deliberately, then regenerate and review `data/3gpp/catalog_seed/`. The Tauri resource seed remains bootstrap-only unless the packaging strategy is explicitly changed.
 
+Release packaging, pinned catalog URL, Windows installer, and updater details are tracked in [release-packaging.md](./release-packaging.md).
+
 ## Lookup Modes
 
 The page has three modes:

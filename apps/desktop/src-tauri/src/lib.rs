@@ -2100,6 +2100,8 @@ fn catalog_root(app_cache_dir: String) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(gpp::jobs::JobRegistry::default())
         .setup(|app| {
             spawn_background_gpp_catalog_seed_install(app.handle().clone());

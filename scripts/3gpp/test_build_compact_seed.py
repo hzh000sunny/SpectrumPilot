@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build_compact_seed import build_compact_seed
+from build_compact_seed import build_compact_seed, meeting_sort_key
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -181,6 +181,80 @@ class BuildCompactSeedTests(unittest.TestCase):
             )
             self.assertIn("R2-2601401", index["items"])
             self.assertIn("R2-2601403", index["items"])
+
+    def test_meeting_sort_places_number_before_suffix_variants(self) -> None:
+        meetings = [
+            "TSGR3_125",
+            "TSGR3_123-bis",
+            "TSGR3_123",
+            "TSGR3_125-bis",
+            "TSGR3_124",
+        ]
+
+        self.assertEqual(
+            sorted(meetings, key=meeting_sort_key),
+            [
+                "TSGR3_123",
+                "TSGR3_123-bis",
+                "TSGR3_124",
+                "TSGR3_125",
+                "TSGR3_125-bis",
+            ],
+        )
+
+    def test_duplicate_tdoc_index_keeps_first_sorted_meeting_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "catalog"
+            target = root / "compact-seed"
+            first_record = sample_record("R2-2601401", 1000, meeting="TSGR2_133", year=2026)
+            duplicate_record = sample_record("R2-2601401", 2000, meeting="TSGR2_133bis", year=2026)
+            first_record["id"] = first_record["canonicalUrl"]
+            duplicate_record["id"] = duplicate_record["canonicalUrl"]
+            write_json(
+                source / "records" / "tdoc" / "RAN2" / "TSGR2_133bis.json",
+                {
+                    "schemaVersion": 1,
+                    "recordType": "tdoc-meeting-records",
+                    "workGroupCode": "RAN2",
+                    "meetingSlug": "TSGR2_133bis",
+                    "docsUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/",
+                    "checkedAt": "2026-07-04T00:00:00Z",
+                    "files": [duplicate_record],
+                },
+            )
+            write_json(
+                source / "records" / "tdoc" / "RAN2" / "TSGR2_133.json",
+                {
+                    "schemaVersion": 1,
+                    "recordType": "tdoc-meeting-records",
+                    "workGroupCode": "RAN2",
+                    "meetingSlug": "TSGR2_133",
+                    "docsUrl": "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133/Docs/",
+                    "checkedAt": "2026-07-04T00:00:00Z",
+                    "files": [first_record],
+                },
+            )
+
+            build_compact_seed(
+                source=source,
+                target=target,
+                seed_version="duplicate-test-seed",
+                generated_at="2026-07-05T00:00:00Z",
+                scope="duplicate key unit test",
+                force=True,
+            )
+
+            records = json.loads(
+                (target / "compact" / "records" / "RAN2.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(records["meetings"][0]["meetingSlug"], "TSGR2_133")
+            self.assertEqual(records["meetings"][1]["meetingSlug"], "TSGR2_133bis")
+
+            index = json.loads(
+                (target / "compact" / "index" / "R2_26.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(index["items"]["R2-2601401"], ["RAN2", 0, 0])
 
 
 if __name__ == "__main__":

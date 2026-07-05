@@ -9,6 +9,10 @@ dist/
 dist-ssr/
 *.local
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Local logs and screenshots
 *.log
 /tmp/
