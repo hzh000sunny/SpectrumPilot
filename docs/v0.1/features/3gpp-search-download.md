@@ -47,6 +47,20 @@ The full compact catalog is committed under `data/3gpp/catalog_seed/` in the rep
 
 If the download source is unavailable or fails, lookup still falls back to direct online probing and targeted listing search.
 
+Release-stage compact seed generation is a manual, offline tooling step. It reads the already accumulated local catalog, including both legacy `records/*.json` file records and `records/tdoc/**/*.json` meeting shards, then writes the compact release artifact and download manifest:
+
+```bash
+python3 scripts/3gpp/build_compact_seed.py \
+  --source /path/to/SpectrumPilot/metadata/3gpp/catalog \
+  --target data/3gpp/catalog_seed \
+  --seed-version compact-stage-seed-YYYY-MM-DD \
+  --generated-at YYYY-MM-DDT00:00:00Z \
+  --scope "2024-2026 staged 3GPP catalog" \
+  --force
+```
+
+This command is not intended to run during every build or every CI job. Near a release boundary, the project should first refresh or backfill the local catalog deliberately, then regenerate and review `data/3gpp/catalog_seed/`. The Tauri resource seed remains bootstrap-only unless the packaging strategy is explicitly changed.
+
 ## Lookup Modes
 
 The page has three modes:
@@ -75,6 +89,9 @@ Advanced scope is collapsed by default. It can force a work group, provide a mee
 | Cancellation | Tauri jobs use a cancellation token and check it before network batches, before download, before extraction, and before opening. |
 | Download and extraction | Downloads the resolved ZIP, extracts with safe enclosed ZIP paths only, and rejects path traversal entries by skipping unsafe names. |
 | Repeat lookup cache | If the exact extracted document already exists, SpectrumPilot opens it without re-downloading or re-extracting. If only the ZIP exists, it extracts the local ZIP without re-downloading. |
+| Candidate selection | When multiple exact proposal candidates are intentionally surfaced by online probing or listing fallback, the job emits a candidate-selection event and waits for the user to choose the ZIP before downloading. |
+| Batch lookup queue | The main 3GPP Ftp page accepts one query per line, runs lookups sequentially, shows pending/running/done/error/cancelled rows, and lets cancelling the active row continue with the remaining pending rows. |
+| Lookup history | Completed lookups append a JSONL history record in internal catalog metadata. Proposal Library reads the latest local history records and displays query, cache status, source URL, ZIP path, opened path, and formatted completion time. |
 | Lookup result status | The completed lookup payload includes `cacheStatus` values `cached_document`, `cached_zip`, or `downloaded`; the UI shows this as `Opened cached document`, `Extracted local ZIP`, or `Downloaded from 3GPP FTP`. |
 | Open target | Opens the exact `.docx`, `.doc`, or `.pdf` matching the package stem first; if no unambiguous document exists, opens the extraction folder. |
 | Seed metadata | The bundled seed includes `seed.json` with seed version, generation timestamp, and seed scope; Settings displays this metadata. |
@@ -132,6 +149,8 @@ ApplicationStorage/
         manifests/      # runtime overlay and scheduled refresh
         records/        # runtime overlay discoveries
         indexes/        # runtime overlay lookup shards
+        history/
+          lookups.jsonl
   logs/
     3gpp-refresh.log
 ```
@@ -162,9 +181,13 @@ Implemented now:
 - Specification archive exact and latest-version lookup.
 - One-click download, safe extraction, and open.
 - Progress modal with cancellation.
+- Candidate-selection UI for multiple exact proposal matches.
+- Batch lookup queue for sequential multi-query runs.
+- Proposal Library history from completed 3GPP lookups.
 - Direct-probe hit caching for faster repeat lookups.
 - Bundled seed catalog installation for empty internal metadata catalogs.
 - Compact 2024-2026 seed generated from the existing staged baseline without a new crawl.
+- Compact seed builder supports mixed local catalog sources: legacy single-file records and sharded meeting records.
 - Compact seed lookup before online fallback.
 - Asynchronous compact seed installation from a manifest URL with size and SHA-256 validation.
 - 3GPP storage, seed metadata, background refresh policy, and catalog status in Settings.
@@ -173,10 +196,8 @@ Implemented now:
 
 Still planned:
 
-- Candidate-selection UI when multiple exact matches are intentionally surfaced.
 - Configure the final GitHub Release catalog manifest URL for production releases.
 - Full historical backfill beyond the current recent-years scope.
 - Release-final stage seed regeneration after a deliberate full refresh/backfill pass.
-- Batch download queue.
-- Proposal library indexing beyond TDoc number lookup.
+- Proposal Library indexing and filtering beyond latest lookup history.
 - User controls for pausing or forcing background refresh.
