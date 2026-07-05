@@ -312,13 +312,14 @@ function GppSettingsContent({
               Catalog
             </Typography.Title>
             <Typography.Paragraph className="muted settings-panel-copy">
-              Bundled seed metadata and local 3GPP index coverage.
+              Local seed metadata, download state, and 3GPP index coverage.
             </Typography.Paragraph>
           </div>
-          <Tag color="blue">Bundled seed catalog</Tag>
+          <CatalogInstallTag state={catalogStatus?.catalogInstallState} />
         </div>
 
         <div className="catalog-summary" aria-label="3GPP catalog status">
+          <SummaryTile label="Install state" value={catalogInstallLabel(catalogStatus)} />
           <SummaryTile label="Manifests" value={`${catalogStatus?.manifestCount ?? 0} manifests`} />
           <SummaryTile
             label="Indexed TDocs"
@@ -332,6 +333,31 @@ function GppSettingsContent({
 
         <div className="settings-table">
           <PathRow label="Seed version" value={catalogStatus?.seedVersion ?? "Loading"} />
+          <PathRow
+            label="Download version"
+            value={catalogStatus?.catalogDownloadVersion ?? "Not configured"}
+          />
+          <PathRow
+            label="Download progress"
+            value={catalogDownloadProgressLabel(catalogStatus)}
+          />
+          <PathRow
+            label="Last download attempt"
+            value={formatDisplayTimestamp(catalogStatus?.catalogDownloadLastAttemptAt, "Never")}
+            title={catalogStatus?.catalogDownloadLastAttemptAt ?? undefined}
+          />
+          <PathRow
+            label="Last download success"
+            value={formatDisplayTimestamp(
+              catalogStatus?.catalogDownloadLastSuccessAt,
+              "Not completed",
+            )}
+            title={catalogStatus?.catalogDownloadLastSuccessAt ?? undefined}
+          />
+          <PathRow
+            label="Last download error"
+            value={catalogStatus?.catalogDownloadLastError ?? "None"}
+          />
           <PathRow
             label="Seed generated"
             value={formatDisplayTimestamp(catalogStatus?.seedGeneratedAt, "Unknown")}
@@ -442,6 +468,52 @@ function refreshCountLabel(catalogStatus: GppCatalogStatus | null) {
   return `${catalogStatus.backgroundRefreshLastRefreshedManifestCount} refreshed manifests`;
 }
 
+function catalogInstallLabel(catalogStatus: GppCatalogStatus | null) {
+  if (!catalogStatus) {
+    return "Loading";
+  }
+  switch (catalogStatus.catalogInstallState) {
+    case "ready":
+      return "Ready";
+    case "downloading":
+      return "Downloading";
+    case "failed":
+      return "Failed";
+    case "not_installed":
+      return "Not installed";
+    default:
+      return catalogStatus.catalogInstallState;
+  }
+}
+
+function catalogDownloadProgressLabel(catalogStatus: GppCatalogStatus | null) {
+  if (!catalogStatus) {
+    return "Loading";
+  }
+  const downloaded = catalogStatus.catalogDownloadedBytes;
+  const expected = catalogStatus.catalogDownloadExpectedBytes;
+  if (downloaded == null && expected == null) {
+    return "No active download";
+  }
+  if (downloaded != null && expected != null && expected > 0) {
+    return `${formatBytes(downloaded)} / ${formatBytes(expected)}`;
+  }
+  if (downloaded != null) {
+    return `${formatBytes(downloaded)} downloaded`;
+  }
+  return `${formatBytes(expected ?? 0)} expected`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
 function formatDisplayTimestamp(value: string | null | undefined, fallback: string) {
   if (!value) {
     return fallback;
@@ -480,6 +552,23 @@ function StatusTag({ status }: { status: GppCatalogStatus["backgroundRefreshStat
             ? "default"
             : "warning";
 
+  return (
+    <Tag color={color} className="status-tag">
+      {label}
+    </Tag>
+  );
+}
+
+function CatalogInstallTag({ state }: { state: GppCatalogStatus["catalogInstallState"] | undefined }) {
+  const label = state ? catalogInstallLabel({ catalogInstallState: state } as GppCatalogStatus) : "Loading";
+  const color =
+    state === "ready"
+      ? "green"
+      : state === "downloading"
+        ? "blue"
+        : state === "failed"
+          ? "red"
+          : "default";
   return (
     <Tag color={color} className="status-tag">
       {label}

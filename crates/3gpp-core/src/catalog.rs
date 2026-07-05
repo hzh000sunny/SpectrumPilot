@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::compact::read_compact_summary;
 use crate::error::{GppError, Result};
 use crate::model::{DirectoryManifest, FileRecord, TDocIndexShard, TDocMeetingRecordShard};
 
@@ -261,12 +262,24 @@ pub fn summarize_catalog(paths: &CatalogPaths) -> Result<CatalogSummary> {
         }
         Ok(())
     })?;
+    let compact_summary = read_compact_summary(paths)?;
+    if let Some(summary) = &compact_summary {
+        last_checked_at = max_timestamp(last_checked_at.take(), summary.latest_checked_at.clone());
+    }
 
     Ok(CatalogSummary {
         schema_version: 1,
         manifest_count,
-        record_count: record_ids.len(),
-        index_count: count_json_files_recursive(&paths.indexes_dir())?,
+        record_count: record_ids.len().saturating_add(
+            compact_summary
+                .as_ref()
+                .map_or(0, |summary| summary.record_count),
+        ),
+        index_count: count_json_files_recursive(&paths.indexes_dir())?.saturating_add(
+            compact_summary
+                .as_ref()
+                .map_or(0, |summary| summary.index_shard_count),
+        ),
         last_checked_at,
     })
 }

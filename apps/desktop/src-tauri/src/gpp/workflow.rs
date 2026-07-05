@@ -7,6 +7,7 @@ use spectrumpilot_3gpp_core::catalog::{
     merge_tdoc_index_shard, read_file_records, read_tdoc_index_shard, write_file_records,
     write_manifest, write_tdoc_meeting_shard, CatalogPaths,
 };
+use spectrumpilot_3gpp_core::compact::resolve_tdoc_from_compact_catalog;
 use spectrumpilot_3gpp_core::index::{
     build_tdoc_index_shards, resolve_tdoc_from_index_shard, TDocLookupIndex,
 };
@@ -797,9 +798,31 @@ fn resolve_indexed_contribution_record(
     let Some(shard) =
         read_tdoc_index_shard(paths, &tdoc.prefix, year).map_err(|source| source.to_string())?
     else {
-        return Ok(None);
+        return resolve_compact_contribution_record(paths, workspace_root, tdoc);
     };
     let Some(entry) = resolve_tdoc_from_index_shard(&tdoc.key, &shard) else {
+        return resolve_compact_contribution_record(paths, workspace_root, tdoc);
+    };
+    Ok(Some(contribution_target_from_direct_url(
+        workspace_root,
+        &entry.work_group_code,
+        &entry.meeting_slug,
+        &entry.tdoc,
+        &entry.url,
+    )))
+}
+
+fn resolve_compact_contribution_record(
+    paths: &CatalogPaths,
+    workspace_root: &Path,
+    tdoc: &TDocKey,
+) -> LookupResult<Option<DownloadTarget>> {
+    let Some(year) = tdoc.year_hint else {
+        return Ok(None);
+    };
+    let Some(entry) = resolve_tdoc_from_compact_catalog(paths, &tdoc.prefix, year, &tdoc.key)
+        .map_err(|source| source.to_string())?
+    else {
         return Ok(None);
     };
     Ok(Some(contribution_target_from_direct_url(
@@ -1012,6 +1035,44 @@ mod tests {
         )
         .expect("resolve")
         .expect("indexed target");
+
+        assert_eq!(
+            target.source_url,
+            "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip"
+        );
+        assert_eq!(target.zip_file_name, "R2-2601401.zip");
+        assert!(target
+            .extract_dir
+            .ends_with("3gpp/tdocs/RAN2/TSGR2_133bis/R2-2601401"));
+    }
+
+    #[test]
+    fn resolves_contribution_from_compact_catalog_when_legacy_index_is_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path().join("3gpp"));
+        let workspace_root = temp.path().join("workspace");
+        let compact_root = paths.root().join("compact");
+        std::fs::create_dir_all(compact_root.join("records")).expect("records dir");
+        std::fs::create_dir_all(compact_root.join("index")).expect("index dir");
+        std::fs::write(
+            compact_root.join("records/RAN2.json"),
+            r#"{"schemaVersion":1,"recordType":"tdoc-compact-records","workGroupCode":"RAN2","baseUrl":"https://www.3gpp.org/ftp/","meetings":[{"id":0,"meetingSlug":"TSGR2_133bis","docsPath":"tsg_ran/WG2_RL2/TSGR2_133bis/Docs","checkedAt":"2026-07-04T00:00:00Z","files":[["R2-2601401.zip",80437,"04-03-26 09:50AM","R2-2601401"]]}]}"#,
+        )
+        .expect("records");
+        std::fs::write(
+            compact_root.join("index/R2_26.json"),
+            r#"{"schemaVersion":1,"recordType":"tdoc-compact-index","prefix":"R2","year":2026,"items":{"R2-2601401":["RAN2",0,0]}}"#,
+        )
+        .expect("index");
+        let record = ran2_record("R2-2601401", "TSGR2_133bis");
+
+        let target = resolve_indexed_contribution_record(
+            &paths,
+            &workspace_root,
+            record.tdoc.as_ref().expect("tdoc"),
+        )
+        .expect("resolve")
+        .expect("compact target");
 
         assert_eq!(
             target.source_url,

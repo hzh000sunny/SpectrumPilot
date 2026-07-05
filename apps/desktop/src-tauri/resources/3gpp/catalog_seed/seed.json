@@ -1,6 +1,1 @@
-{
-  "recordType": "3gpp-catalog-seed",
-  "seedVersion": "stage-seed-2026-07-02",
-  "seedGeneratedAt": "2026-07-02T00:00:00Z",
-  "seedScope": "RAN2 meetings TSGR2_132 and TSGR2_133bis"
-}
+{"recordType":"3gpp-catalog-seed","seedVersion":"bootstrap-seed-2026-07-05","seedGeneratedAt":"2026-07-05T00:00:00Z","seedScope":"Bootstrap metadata only. Full compact 3GPP catalog is installed asynchronously from repository seed data.","catalogFormat":"bootstrap-v1","catalogDownloadManifestUrl":"https://raw.githubusercontent.com/hzh000sunny/SpectrumPilot/main/data/3gpp/catalog_seed/download-manifest.json","recordCount":0,"meetingCount":0,"indexItemCount":0}

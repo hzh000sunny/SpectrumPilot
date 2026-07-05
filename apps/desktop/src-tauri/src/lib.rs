@@ -6,6 +6,7 @@ use std::time::Duration;
 use chrono::Utc;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use spectrumpilot_3gpp_core::catalog::{
     manifest_path_for_url, merge_tdoc_index_shard, read_file_records, summarize_catalog,
     write_file_records, write_json_atomic, write_manifest, write_tdoc_meeting_shard, CatalogPaths,
@@ -33,6 +34,7 @@ static BUNDLED_CATALOG_SEED: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/resources/3gpp/catalog_seed");
 
 const GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES: u64 = 60;
+const GPP_CATALOG_SEED_INSTALL_START_DELAY_SECS: u64 = 3;
 const GPP_BACKGROUND_REFRESH_START_DELAY_SECS: u64 = 15;
 const GPP_BACKGROUND_REFRESH_REQUEST_DELAY_SECS: u64 = 2;
 const GPP_BACKGROUND_REFRESH_MAX_MEETINGS_PER_WORKGROUP: usize = 8;
@@ -87,6 +89,15 @@ struct GppCatalogStatus {
     manifest_count: usize,
     record_count: usize,
     index_count: usize,
+    catalog_install_state: String,
+    catalog_download_source: Option<String>,
+    catalog_download_version: Option<String>,
+    catalog_download_last_attempt_at: Option<String>,
+    catalog_download_last_success_at: Option<String>,
+    catalog_download_last_error: Option<String>,
+    catalog_downloaded_bytes: Option<u64>,
+    catalog_download_expected_bytes: Option<u64>,
+    catalog_download_sha256: Option<String>,
     seed_version: String,
     seed_generated_at: Option<String>,
     seed_scope: String,
@@ -110,6 +121,8 @@ struct CatalogSeedMetadata {
     seed_version: String,
     seed_generated_at: Option<String>,
     seed_scope: String,
+    #[serde(default)]
+    catalog_download_manifest_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +142,40 @@ struct BackgroundRefreshSettings {
     record_type: String,
     enabled: bool,
     interval_minutes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogDownloadStatus {
+    record_type: String,
+    state: String,
+    source_url: Option<String>,
+    version: Option<String>,
+    last_attempt_at: Option<String>,
+    last_success_at: Option<String>,
+    last_error: Option<String>,
+    downloaded_bytes: Option<u64>,
+    expected_bytes: Option<u64>,
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogDownloadManifest {
+    record_type: String,
+    schema_version: u32,
+    seed_version: String,
+    file_count: usize,
+    total_size_bytes: u64,
+    files: Vec<CatalogDownloadManifestFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogDownloadManifestFile {
+    path: String,
+    size_bytes: u64,
+    sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -462,6 +509,7 @@ fn install_bundled_catalog_seed_if_empty(
     installed += install_seed_subtree_if_empty("manifests", &paths.manifests_dir())?;
     installed += install_seed_subtree_if_empty("records", &paths.records_dir())?;
     installed += install_seed_subtree_if_empty("indexes", &paths.indexes_dir())?;
+    installed += install_seed_subtree_if_empty("compact", &paths.root().join("compact"))?;
     Ok(installed)
 }
 
@@ -558,6 +606,8 @@ fn to_catalog_status(
     let seed_metadata = read_catalog_seed_metadata(paths)?;
     let refresh_status =
         read_background_refresh_status(paths)?.unwrap_or_else(default_background_refresh_status);
+    let download_status = read_catalog_download_status(paths)?
+        .unwrap_or_else(|| infer_catalog_download_status(paths, &summary));
     let refresh_state = if refresh_settings.enabled {
         refresh_status.state
     } else {
@@ -568,6 +618,15 @@ fn to_catalog_status(
         manifest_count: summary.manifest_count,
         record_count: summary.record_count,
         index_count: summary.index_count,
+        catalog_install_state: download_status.state,
+        catalog_download_source: download_status.source_url,
+        catalog_download_version: download_status.version,
+        catalog_download_last_attempt_at: download_status.last_attempt_at,
+        catalog_download_last_success_at: download_status.last_success_at,
+        catalog_download_last_error: download_status.last_error,
+        catalog_downloaded_bytes: download_status.downloaded_bytes,
+        catalog_download_expected_bytes: download_status.expected_bytes,
+        catalog_download_sha256: download_status.sha256,
         seed_version: seed_metadata.seed_version,
         seed_generated_at: seed_metadata.seed_generated_at,
         seed_scope: seed_metadata.seed_scope,
@@ -603,6 +662,7 @@ fn read_catalog_seed_metadata(
             seed_version: "unversioned-seed".to_string(),
             seed_generated_at: None,
             seed_scope: "Bundled 3GPP catalog seed".to_string(),
+            catalog_download_manifest_url: None,
         });
     };
     serde_json::from_slice(seed_file.contents())
@@ -611,6 +671,10 @@ fn read_catalog_seed_metadata(
 
 fn background_refresh_status_path(paths: &CatalogPaths) -> PathBuf {
     paths.root().join("background-refresh.json")
+}
+
+fn catalog_download_status_path(paths: &CatalogPaths) -> PathBuf {
+    paths.root().join("catalog-download.json")
 }
 
 fn background_refresh_settings_path(config_dir: &Path) -> PathBuf {
@@ -627,6 +691,257 @@ fn default_background_refresh_settings() -> BackgroundRefreshSettings {
         enabled: true,
         interval_minutes: GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES,
     }
+}
+
+fn infer_catalog_download_status(
+    paths: &CatalogPaths,
+    _summary: &CatalogSummary,
+) -> CatalogDownloadStatus {
+    let has_compact_summary = paths.root().join("compact").join("summary.json").exists();
+    CatalogDownloadStatus {
+        record_type: "3gpp-catalog-download-status".to_string(),
+        state: if has_compact_summary {
+            "ready".to_string()
+        } else {
+            "not_installed".to_string()
+        },
+        source_url: None,
+        version: None,
+        last_attempt_at: None,
+        last_success_at: None,
+        last_error: None,
+        downloaded_bytes: None,
+        expected_bytes: None,
+        sha256: None,
+    }
+}
+
+fn read_catalog_download_status(
+    paths: &CatalogPaths,
+) -> std::result::Result<Option<CatalogDownloadStatus>, String> {
+    let path = catalog_download_status_path(paths);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let body =
+        fs::read(&path).map_err(|source| format!("failed to read {}: {source}", path.display()))?;
+    serde_json::from_slice(&body)
+        .map(Some)
+        .map_err(|source| format!("failed to parse {}: {source}", path.display()))
+}
+
+fn write_catalog_download_status(
+    paths: &CatalogPaths,
+    status: &CatalogDownloadStatus,
+) -> std::result::Result<(), String> {
+    write_json_atomic(&catalog_download_status_path(paths), status)
+        .map_err(|source| source.to_string())
+}
+
+async fn install_catalog_seed_from_manifest_url(
+    paths: &CatalogPaths,
+    manifest_url: &str,
+    client: &reqwest::Client,
+) -> std::result::Result<CatalogDownloadStatus, String> {
+    let started_at = Utc::now().to_rfc3339();
+    write_catalog_download_status(
+        paths,
+        &CatalogDownloadStatus {
+            record_type: "3gpp-catalog-download-status".to_string(),
+            state: "downloading".to_string(),
+            source_url: Some(manifest_url.to_string()),
+            version: None,
+            last_attempt_at: Some(started_at.clone()),
+            last_success_at: None,
+            last_error: None,
+            downloaded_bytes: Some(0),
+            expected_bytes: None,
+            sha256: None,
+        },
+    )?;
+
+    match install_catalog_seed_from_manifest_url_inner(paths, manifest_url, client, &started_at)
+        .await
+    {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            let failed = CatalogDownloadStatus {
+                record_type: "3gpp-catalog-download-status".to_string(),
+                state: "failed".to_string(),
+                source_url: Some(manifest_url.to_string()),
+                version: None,
+                last_attempt_at: Some(started_at),
+                last_success_at: None,
+                last_error: Some(error.clone()),
+                downloaded_bytes: None,
+                expected_bytes: None,
+                sha256: None,
+            };
+            write_catalog_download_status(paths, &failed)?;
+            Err(error)
+        }
+    }
+}
+
+async fn install_catalog_seed_from_manifest_url_inner(
+    paths: &CatalogPaths,
+    manifest_url: &str,
+    client: &reqwest::Client,
+    started_at: &str,
+) -> std::result::Result<CatalogDownloadStatus, String> {
+    let manifest_bytes = fetch_catalog_seed_bytes(client, manifest_url).await?;
+    let manifest: CatalogDownloadManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|source| format!("failed to parse catalog download manifest: {source}"))?;
+    if manifest.record_type != "3gpp-catalog-download-manifest" {
+        return Err(format!(
+            "unexpected catalog download manifest type: {}",
+            manifest.record_type
+        ));
+    }
+    if manifest.file_count != manifest.files.len() {
+        return Err(format!(
+            "catalog download manifest file count mismatch: expected {}, listed {}",
+            manifest.file_count,
+            manifest.files.len()
+        ));
+    }
+
+    let staging = paths.root().join("staging").join("catalog-seed-download");
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .map_err(|source| format!("failed to clean {}: {source}", staging.display()))?;
+    }
+    fs::create_dir_all(&staging)
+        .map_err(|source| format!("failed to create {}: {source}", staging.display()))?;
+
+    let mut downloaded_bytes = 0_u64;
+    for file in &manifest.files {
+        validate_manifest_relative_path(&file.path)?;
+        let file_url = resolve_catalog_seed_file_url(manifest_url, &file.path)?;
+        let body = fetch_catalog_seed_bytes(client, &file_url).await?;
+        let body_len = body.len() as u64;
+        if body_len != file.size_bytes {
+            return Err(format!(
+                "catalog seed file size mismatch for {}: expected {}, got {}",
+                file.path, file.size_bytes, body_len
+            ));
+        }
+        let actual_sha = sha256_hex(&body);
+        if actual_sha != file.sha256 {
+            return Err(format!(
+                "catalog seed sha256 mismatch for {}: expected {}, got {}",
+                file.path, file.sha256, actual_sha
+            ));
+        }
+        let target = staging.join(&file.path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|source| format!("failed to create {}: {source}", parent.display()))?;
+        }
+        fs::write(&target, &body)
+            .map_err(|source| format!("failed to write {}: {source}", target.display()))?;
+        downloaded_bytes += body_len;
+    }
+
+    let active_compact = paths.root().join("compact");
+    let active_seed = paths.root().join("seed.json");
+    let staging_compact = staging.join("compact");
+    let staging_seed = staging.join("seed.json");
+    if !staging_compact.join("summary.json").exists() {
+        return Err("catalog seed download did not contain compact/summary.json".to_string());
+    }
+    if !staging_seed.exists() {
+        return Err("catalog seed download did not contain seed.json".to_string());
+    }
+    if active_compact.exists() {
+        fs::remove_dir_all(&active_compact).map_err(|source| {
+            format!("failed to replace {}: {source}", active_compact.display())
+        })?;
+    }
+    fs::rename(&staging_compact, &active_compact).map_err(|source| {
+        format!(
+            "failed to activate compact catalog {}: {source}",
+            active_compact.display()
+        )
+    })?;
+    fs::copy(&staging_seed, &active_seed)
+        .map_err(|source| format!("failed to activate {}: {source}", active_seed.display()))?;
+    fs::remove_dir_all(&staging)
+        .map_err(|source| format!("failed to remove {}: {source}", staging.display()))?;
+
+    let status = CatalogDownloadStatus {
+        record_type: "3gpp-catalog-download-status".to_string(),
+        state: "ready".to_string(),
+        source_url: Some(manifest_url.to_string()),
+        version: Some(manifest.seed_version),
+        last_attempt_at: Some(started_at.to_string()),
+        last_success_at: Some(Utc::now().to_rfc3339()),
+        last_error: None,
+        downloaded_bytes: Some(downloaded_bytes),
+        expected_bytes: Some(manifest.total_size_bytes),
+        sha256: Some(sha256_hex(&manifest_bytes)),
+    };
+    write_catalog_download_status(paths, &status)?;
+    Ok(status)
+}
+
+async fn fetch_catalog_seed_bytes(
+    client: &reqwest::Client,
+    url: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return fs::read(path).map_err(|source| format!("failed to read {path}: {source}"));
+    }
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|source| format!("failed to download {url}: {source}"))?
+        .error_for_status()
+        .map_err(|source| format!("failed to download {url}: {source}"))?;
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|source| format!("failed to read {url}: {source}"))
+}
+
+fn resolve_catalog_seed_file_url(
+    manifest_url: &str,
+    relative_path: &str,
+) -> std::result::Result<String, String> {
+    validate_manifest_relative_path(relative_path)?;
+    if let Some(path) = manifest_url.strip_prefix("file://") {
+        let manifest_path = PathBuf::from(path);
+        let Some(parent) = manifest_path.parent() else {
+            return Err(format!("manifest file URL has no parent: {manifest_url}"));
+        };
+        return Ok(format!("file://{}", parent.join(relative_path).display()));
+    }
+    let base = Url::parse(manifest_url)
+        .map_err(|source| format!("invalid catalog manifest URL {manifest_url}: {source}"))?;
+    base.join(relative_path)
+        .map(|url| url.to_string())
+        .map_err(|source| format!("invalid catalog file path {relative_path}: {source}"))
+}
+
+fn validate_manifest_relative_path(path: &str) -> std::result::Result<(), String> {
+    let relative = Path::new(path);
+    if path.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!("invalid catalog seed relative path: {path}"));
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 fn read_background_refresh_settings(
@@ -911,6 +1226,48 @@ fn spawn_background_gpp_catalog_refresh(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(sleep_minutes * 60)).await;
         }
     });
+}
+
+fn spawn_background_gpp_catalog_seed_install(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(
+            GPP_CATALOG_SEED_INSTALL_START_DELAY_SECS,
+        ))
+        .await;
+        if let Err(source) = install_configured_catalog_seed_for_app(&app).await {
+            eprintln!("SpectrumPilot 3GPP catalog seed install failed: {source}");
+        }
+    });
+}
+
+async fn install_configured_catalog_seed_for_app(
+    app: &AppHandle,
+) -> std::result::Result<(), String> {
+    let paths = app_catalog_paths(app)?;
+    let summary = summarize_catalog(&paths).map_err(|source| source.to_string())?;
+    if paths.root().join("compact").join("summary.json").exists() {
+        return Ok(());
+    }
+
+    let seed_metadata = read_catalog_seed_metadata(&paths)?;
+    let manifest_url = std::env::var("SPECTRUMPILOT_3GPP_CATALOG_MANIFEST_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or(seed_metadata.catalog_download_manifest_url)
+        .filter(|value| !value.trim().is_empty());
+    let Some(manifest_url) = manifest_url else {
+        write_catalog_download_status(&paths, &infer_catalog_download_status(&paths, &summary))?;
+        return Ok(());
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent("SpectrumPilot/0.1 3GPP catalog seed installer")
+        .build()
+        .map_err(|source| format!("failed to build catalog seed HTTP client: {source}"))?;
+    install_catalog_seed_from_manifest_url(&paths, &manifest_url, &client)
+        .await
+        .map(|_| ())
 }
 
 fn skip_disabled_background_refresh_for_app(app: &AppHandle) -> std::result::Result<(), String> {
@@ -1630,6 +1987,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(gpp::jobs::JobRegistry::default())
         .setup(|app| {
+            spawn_background_gpp_catalog_seed_install(app.handle().clone());
             spawn_background_gpp_catalog_refresh(app.handle().clone());
             Ok(())
         })
@@ -1664,24 +2022,29 @@ mod tests {
     use super::download_file_name_for_url;
     use super::download_target_path;
     use super::install_bundled_catalog_seed_if_empty;
+    use super::install_catalog_seed_from_manifest_url;
     use super::likely_meeting_filter;
     use super::migrate_runtime_layout;
     use super::read_app_settings;
     use super::read_background_refresh_settings;
     use super::read_background_refresh_status;
+    use super::read_catalog_download_status;
     use super::read_or_create_app_settings;
     use super::recent_meeting_children;
     use super::search_online_tdoc;
+    use super::sha256_hex;
     use super::should_refresh_manifest_children;
     use super::to_catalog_status;
     use super::write_app_settings;
     use super::write_background_refresh_settings;
     use super::write_background_refresh_status;
+    use super::write_catalog_download_status;
     use super::write_discovered_tdoc_records;
     use super::write_docs_tdoc_records;
     use super::AppSettings;
     use super::BackgroundRefreshSettings;
     use super::BackgroundRefreshStatus;
+    use super::CatalogDownloadStatus;
     use super::GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES;
     use chrono::Utc;
     use spectrumpilot_3gpp_core::catalog::{
@@ -2086,13 +2449,14 @@ mod tests {
         let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
         let second_install = install_bundled_catalog_seed_if_empty(&paths).expect("second install");
 
-        assert!(installed >= 7);
-        assert!(summary.manifest_count >= 7);
+        assert_eq!(installed, 1);
+        assert_eq!(summary.record_count, 0);
+        assert_eq!(summary.index_count, 0);
         assert_eq!(second_install, 0);
     }
 
     #[test]
-    fn installs_missing_seed_records_and_indexes_when_manifests_exist() {
+    fn installs_missing_bootstrap_seed_metadata_when_manifests_exist() {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = CatalogPaths::new(temp.path());
         let existing_manifest = DirectoryManifest {
@@ -2111,8 +2475,9 @@ mod tests {
         let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
 
         assert!(installed > 0);
-        assert!(summary.record_count > 0);
-        assert!(summary.index_count > 0);
+        assert_eq!(summary.manifest_count, 1);
+        assert_eq!(summary.record_count, 0);
+        assert_eq!(summary.index_count, 0);
     }
 
     #[test]
@@ -2135,15 +2500,155 @@ mod tests {
         )
         .expect("status");
 
-        assert_eq!(status.seed_version, "stage-seed-2026-07-02");
+        assert_eq!(status.seed_version, "bootstrap-seed-2026-07-05");
         assert_eq!(
             status.seed_generated_at,
-            Some("2026-07-02T00:00:00Z".to_string())
+            Some("2026-07-05T00:00:00Z".to_string())
+        );
+        assert!(status.seed_scope.contains("Bootstrap metadata only"));
+        assert_eq!(status.catalog_install_state, "not_installed");
+    }
+
+    #[test]
+    fn catalog_status_reports_not_installed_when_no_seed_is_available() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path());
+        let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
+
+        let settings = BackgroundRefreshSettings {
+            record_type: "3gpp-background-refresh-settings".to_string(),
+            enabled: true,
+            interval_minutes: GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES,
+        };
+        let status = to_catalog_status(
+            &paths,
+            summary,
+            &settings,
+            &background_refresh_log_path(temp.path()),
+        )
+        .expect("status");
+
+        assert_eq!(status.catalog_install_state, "not_installed");
+        assert_eq!(status.catalog_download_last_error, None);
+    }
+
+    #[test]
+    fn legacy_overlay_records_do_not_make_full_compact_seed_ready() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path());
+        let record = test_ran2_record("R2-2601401", "TSGR2_133bis");
+        write_discovered_tdoc_records(
+            &paths,
+            "RAN2",
+            "TSGR2_133bis",
+            "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/",
+            "2026-07-02T08:00:00Z",
+            &[record],
+        )
+        .expect("write overlay records");
+        let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
+
+        let settings = BackgroundRefreshSettings {
+            record_type: "3gpp-background-refresh-settings".to_string(),
+            enabled: true,
+            interval_minutes: GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES,
+        };
+        let status = to_catalog_status(
+            &paths,
+            summary,
+            &settings,
+            &background_refresh_log_path(temp.path()),
+        )
+        .expect("status");
+
+        assert_eq!(status.record_count, 1);
+        assert_eq!(status.catalog_install_state, "not_installed");
+    }
+
+    #[test]
+    fn catalog_download_status_roundtrips_and_overrides_inferred_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = CatalogPaths::new(temp.path());
+        let download_status = CatalogDownloadStatus {
+            record_type: "3gpp-catalog-download-status".to_string(),
+            state: "failed".to_string(),
+            source_url: Some("https://github.com/hzh000sunny/SpectrumPilot/releases/download/catalog/3gpp-compact.json".to_string()),
+            version: Some("compact-stage-seed-2026-07-05".to_string()),
+            last_attempt_at: Some("2026-07-05T08:00:00Z".to_string()),
+            last_success_at: None,
+            last_error: Some("HTTP 403".to_string()),
+            downloaded_bytes: Some(1024),
+            expected_bytes: Some(2048),
+            sha256: Some("abc123".to_string()),
+        };
+
+        write_catalog_download_status(&paths, &download_status).expect("write download status");
+        let read = read_catalog_download_status(&paths)
+            .expect("read download status")
+            .expect("download status");
+        let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
+        let settings = BackgroundRefreshSettings {
+            record_type: "3gpp-background-refresh-settings".to_string(),
+            enabled: true,
+            interval_minutes: GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES,
+        };
+        let status = to_catalog_status(
+            &paths,
+            summary,
+            &settings,
+            &background_refresh_log_path(temp.path()),
+        )
+        .expect("status");
+
+        assert_eq!(read, download_status);
+        assert_eq!(status.catalog_install_state, "failed");
+        assert_eq!(
+            status.catalog_download_last_error.as_deref(),
+            Some("HTTP 403")
         );
         assert_eq!(
-            status.seed_scope,
-            "RAN2 meetings TSGR2_132 and TSGR2_133bis"
+            status.catalog_download_version.as_deref(),
+            Some("compact-stage-seed-2026-07-05")
         );
+        assert_eq!(status.catalog_downloaded_bytes, Some(1024));
+        assert_eq!(status.catalog_download_expected_bytes, Some(2048));
+    }
+
+    #[tokio::test]
+    async fn installs_catalog_seed_from_local_download_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let paths = CatalogPaths::new(temp.path().join("runtime"));
+        let seed = br#"{"recordType":"3gpp-catalog-seed","seedVersion":"local-test-seed","seedGeneratedAt":"2026-07-05T00:00:00Z","seedScope":"local test","catalogFormat":"compact-v1","recordCount":1,"meetingCount":1,"indexItemCount":1}"#;
+        let summary = br#"{"schemaVersion":1,"recordType":"tdoc-compact-summary","catalogFormat":"compact-v1","recordCount":1,"meetingCount":1,"recordShardCount":0,"indexShardCount":0,"indexItemCount":1,"latestCheckedAt":"2026-07-05T00:00:00Z"}"#;
+        std::fs::create_dir_all(source.join("compact")).expect("source dirs");
+        std::fs::write(source.join("seed.json"), seed).expect("seed");
+        std::fs::write(source.join("compact").join("summary.json"), summary).expect("summary");
+        let manifest = format!(
+            r#"{{"recordType":"3gpp-catalog-download-manifest","schemaVersion":1,"seedVersion":"local-test-seed","fileCount":2,"totalSizeBytes":{},"files":[{{"path":"seed.json","sizeBytes":{},"sha256":"{}"}},{{"path":"compact/summary.json","sizeBytes":{},"sha256":"{}"}}]}}"#,
+            seed.len() + summary.len(),
+            seed.len(),
+            sha256_hex(seed),
+            summary.len(),
+            sha256_hex(summary),
+        );
+        std::fs::write(source.join("download-manifest.json"), manifest).expect("manifest");
+
+        let client = reqwest::Client::builder().build().expect("client");
+        let status = install_catalog_seed_from_manifest_url(
+            &paths,
+            &format!("file://{}", source.join("download-manifest.json").display()),
+            &client,
+        )
+        .await
+        .expect("install seed");
+
+        assert_eq!(status.state, "ready");
+        assert_eq!(status.version.as_deref(), Some("local-test-seed"));
+        assert!(paths.root().join("compact").join("summary.json").exists());
+        assert!(paths.root().join("seed.json").exists());
+        let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
+        assert_eq!(summary.record_count, 1);
     }
 
     #[test]

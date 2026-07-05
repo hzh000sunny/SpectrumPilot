@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod compact;
 pub mod error;
 pub mod index;
 pub mod manifest;

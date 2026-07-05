@@ -25,13 +25,27 @@ R2-2601401 from TSGR2_120
 
 The page is intentionally not a catalog diagnostics surface. Manifest, record, index, runtime, and path details belong in Settings.
 
-## Bundled Seed Catalog
+## Compact Seed Catalog
 
 The product should not ask users to initialize the 3GPP catalog after installation.
 
-SpectrumPilot ships with a bundled seed catalog. On first startup, if the local 3GPP catalog directory is empty, the app silently copies the bundled seed into the internal application storage metadata directory. Users can search immediately without clicking an initialization button.
+SpectrumPilot supports a compact read-only seed catalog. On first startup, the app silently copies a small bootstrap seed into the internal application storage metadata directory. The bootstrap seed does not contain the full TDoc index. It exists so Settings can show seed/download state while the full compact catalog is installed asynchronously.
 
-The current repository seed is intentionally small and comes from catalog files already fetched during development. Near the end of a release cycle, the project should generate a larger stage-specific seed from the locally accumulated catalog, then perform one deliberate full refresh before freezing that release seed. This is not a build-time or every-CI-run crawl.
+The 2024-2026 staged baseline was converted from the already fetched 350 MB sharded catalog without crawling 3GPP again. The compact release seed stores the same recent proposal coverage as 77 JSON files and about 18 MB:
+
+```text
+recordCount: 215,379
+indexItemCount: 215,338
+meetingCount: 232
+recordShardCount: 16
+indexShardCount: 59
+```
+
+The compact format removes repeated full URLs and repeated JSON field names from per-file entries. Workgroup record shards share the base URL and meeting `Docs` path, while prefix/year index shards store only pointers into those records.
+
+The full compact catalog is committed under `data/3gpp/catalog_seed/` in the repository and includes `download-manifest.json` with file sizes and SHA-256 hashes. The installer resources under `apps/desktop/src-tauri/resources/3gpp/catalog_seed/` intentionally contain only bootstrap metadata and the default download manifest URL, so the desktop installer does not need to embed the full catalog. At runtime, SpectrumPilot downloads/copies every listed JSON file into a staging directory, validates each hash, and atomically activates the compact catalog.
+
+If the download source is unavailable or fails, lookup still falls back to direct online probing and targeted listing search.
 
 ## Lookup Modes
 
@@ -52,7 +66,7 @@ Advanced scope is collapsed by default. It can force a work group, provide a mee
 | Query normalization | Accepts lowercase proposal input and optional `.zip` suffix, then normalizes to canonical form such as `R2-2601401`. |
 | Specification parsing | Accepts dotted and compact spec numbers, release-letter filters, and exact versions such as `38.321 f10` or `38321-f10`. |
 | Source inference | Maps proposal prefixes including RAN, SA, and CT plenary/workgroup prefixes to 3GPP FTP branches. |
-| Local lookup | Reads cached `FileRecord` JSON records and resolves proposals through the local `TDocLookupIndex` before network access. |
+| Local lookup | Checks runtime overlay shards first, then the compact read-only seed, then legacy `FileRecord` records before network access. |
 | Direct proposal probe | Builds exact candidate URLs such as `.../Docs/R2-2601401.zip`, probes with `HEAD`, requires `200 OK`, and requires the URL basename to exactly match the requested ZIP. |
 | Online fallback | If direct probing misses, falls back to the existing listing-based search over meeting roots and `Docs` folders. |
 | Cache update | Stores discovered listing records from fallback search and writes direct-probe hits back into the local file-record cache. |
@@ -64,6 +78,7 @@ Advanced scope is collapsed by default. It can force a work group, provide a mee
 | Lookup result status | The completed lookup payload includes `cacheStatus` values `cached_document`, `cached_zip`, or `downloaded`; the UI shows this as `Opened cached document`, `Extracted local ZIP`, or `Downloaded from 3GPP FTP`. |
 | Open target | Opens the exact `.docx`, `.doc`, or `.pdf` matching the package stem first; if no unambiguous document exists, opens the extraction folder. |
 | Seed metadata | The bundled seed includes `seed.json` with seed version, generation timestamp, and seed scope; Settings displays this metadata. |
+| Catalog install state | Settings displays compact seed install/download status from `catalog-download.json` or infers `Ready` only when local compact data is present. |
 | Background incremental refresh | On desktop startup, SpectrumPilot waits 15 seconds, then refreshes the six supported `tsg_*` root manifests sequentially with a 2-second delay between requests. It repeats every 60 minutes and does not expose a manual Sync button on the main UI. If a root manifest fingerprint changes, it refreshes changed workgroup manifests, then only the most recent 8 meeting directories per changed workgroup, and writes updated Docs records back to meeting shards and lookup indexes. |
 | Background refresh status | The background refresh loop persists `catalog/background-refresh.json` with state, last start time, last successful completion time, last error, and the most recent refreshed manifest count. Settings displays these values for diagnostics. |
 
@@ -103,10 +118,20 @@ ApplicationStorage/
     3gpp/
       catalog/
         seed.json
+        catalog-download.json
         background-refresh.json
-        manifests/
-        records/
-        indexes/
+        staging/
+        compact/
+          summary.json
+          records/
+            RAN2.json
+            SA2.json
+          index/
+            R2_26.json
+            S2_26.json
+        manifests/      # runtime overlay and scheduled refresh
+        records/        # runtime overlay discoveries
+        indexes/        # runtime overlay lookup shards
   logs/
     3gpp-refresh.log
 ```
@@ -139,6 +164,9 @@ Implemented now:
 - Progress modal with cancellation.
 - Direct-probe hit caching for faster repeat lookups.
 - Bundled seed catalog installation for empty internal metadata catalogs.
+- Compact 2024-2026 seed generated from the existing staged baseline without a new crawl.
+- Compact seed lookup before online fallback.
+- Asynchronous compact seed installation from a manifest URL with size and SHA-256 validation.
 - 3GPP storage, seed metadata, background refresh policy, and catalog status in Settings.
 - Conservative scheduled refresh of the supported `tsg_*` roots with parent/child manifest diffing and an 8-meeting per changed workgroup window.
 - Persisted background refresh state and last-error display in Settings.
@@ -146,9 +174,9 @@ Implemented now:
 Still planned:
 
 - Candidate-selection UI when multiple exact matches are intentionally surfaced.
-- User-configurable workspace directory.
-- Full historical backfill.
-- Release-final stage seed generation from the accumulated local catalog after a deliberate full refresh/backfill pass.
+- Configure the final GitHub Release catalog manifest URL for production releases.
+- Full historical backfill beyond the current recent-years scope.
+- Release-final stage seed regeneration after a deliberate full refresh/backfill pass.
 - Batch download queue.
 - Proposal library indexing beyond TDoc number lookup.
 - User controls for pausing or forcing background refresh.

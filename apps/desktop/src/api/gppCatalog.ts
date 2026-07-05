@@ -6,6 +6,15 @@ export type GppCatalogStatus = {
   manifestCount: number;
   recordCount: number;
   indexCount: number;
+  catalogInstallState: "not_installed" | "downloading" | "ready" | "failed";
+  catalogDownloadSource: string | null;
+  catalogDownloadVersion: string | null;
+  catalogDownloadLastAttemptAt: string | null;
+  catalogDownloadLastSuccessAt: string | null;
+  catalogDownloadLastError: string | null;
+  catalogDownloadedBytes: number | null;
+  catalogDownloadExpectedBytes: number | null;
+  catalogDownloadSha256: string | null;
   seedVersion: string;
   seedGeneratedAt: string | null;
   seedScope: string;
@@ -99,6 +108,15 @@ const PREVIEW_STATUS: GppCatalogStatus = {
   manifestCount: 0,
   recordCount: 0,
   indexCount: 0,
+  catalogInstallState: "not_installed",
+  catalogDownloadSource: null,
+  catalogDownloadVersion: null,
+  catalogDownloadLastAttemptAt: null,
+  catalogDownloadLastSuccessAt: null,
+  catalogDownloadLastError: null,
+  catalogDownloadedBytes: null,
+  catalogDownloadExpectedBytes: null,
+  catalogDownloadSha256: null,
   seedVersion: "browser-preview",
   seedGeneratedAt: null,
   seedScope: "Browser preview does not install a 3GPP catalog seed.",

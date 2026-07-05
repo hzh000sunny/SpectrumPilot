@@ -33,6 +33,41 @@ function runtimePathsMock(overrides: Partial<Record<string, string>> = {}) {
   };
 }
 
+function catalogStatusMock(overrides: Record<string, unknown> = {}) {
+  return {
+    catalogRoot: "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
+    manifestCount: 7,
+    recordCount: 2696,
+    indexCount: 2,
+    catalogInstallState: "ready",
+    catalogDownloadSource:
+      "https://github.com/hzh000sunny/SpectrumPilot/releases/download/catalog/3gpp-compact.json",
+    catalogDownloadVersion: "compact-stage-seed-2026-07-05",
+    catalogDownloadLastAttemptAt: "2026-07-05T08:00:00Z",
+    catalogDownloadLastSuccessAt: "2026-07-05T08:01:00Z",
+    catalogDownloadLastError: null,
+    catalogDownloadedBytes: 18 * 1024 * 1024,
+    catalogDownloadExpectedBytes: 18 * 1024 * 1024,
+    catalogDownloadSha256: "abc123",
+    seedVersion: "stage-seed-2026-07-02",
+    seedGeneratedAt: "2026-07-02T00:00:00Z",
+    seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
+    backgroundRefreshEnabled: true,
+    backgroundRefreshIntervalMinutes: 60,
+    backgroundRefreshTrackedRoots: 6,
+    backgroundRefreshMeetingWindow: 8,
+    backgroundRefreshState: "succeeded",
+    backgroundRefreshLastStartedAt: "2026-07-03T08:00:00Z",
+    backgroundRefreshLastCompletedAt: "2026-07-03T08:01:00Z",
+    backgroundRefreshLastError: null,
+    backgroundRefreshLastRefreshedManifestCount: 12,
+    backgroundRefreshLogPath:
+      "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
+    lastCheckedAt: "2026-07-01T08:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -48,28 +83,14 @@ describe("SettingsPage", () => {
         return Promise.resolve(runtimePathsMock());
       }
       if (command === "gpp_catalog_status") {
-        return Promise.resolve({
-          catalogRoot:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
-          manifestCount: 7,
-          recordCount: 2696,
-          indexCount: 2,
-          seedVersion: "stage-seed-2026-07-02",
-          seedGeneratedAt: "2026-07-02T00:00:00Z",
-          seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
-          backgroundRefreshEnabled: true,
-          backgroundRefreshIntervalMinutes: 60,
-          backgroundRefreshTrackedRoots: 6,
-          backgroundRefreshMeetingWindow: 8,
-          backgroundRefreshState: "failed",
-          backgroundRefreshLastStartedAt: "2026-07-03T08:00:00Z",
-          backgroundRefreshLastCompletedAt: null,
-          backgroundRefreshLastError: "HTTP 429",
-          backgroundRefreshLastRefreshedManifestCount: 0,
-          backgroundRefreshLogPath:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
-          lastCheckedAt: "2026-07-01T08:00:00Z",
-        });
+        return Promise.resolve(
+          catalogStatusMock({
+            backgroundRefreshState: "failed",
+            backgroundRefreshLastCompletedAt: null,
+            backgroundRefreshLastError: "HTTP 429",
+            backgroundRefreshLastRefreshedManifestCount: 0,
+          }),
+        );
       }
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
@@ -99,6 +120,9 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(await screen.findByText("HTTP 429")).toBeInTheDocument();
     expect(await screen.findByText("stage-seed-2026-07-02")).toBeInTheDocument();
+    expect(await screen.findByText("compact-stage-seed-2026-07-05")).toBeInTheDocument();
+    expect(await screen.findAllByText("Ready")).toHaveLength(2);
+    expect(await screen.findByText("18.0 MB / 18.0 MB")).toBeInTheDocument();
     expect(await screen.findByText("RAN2 meetings TSGR2_132 and TSGR2_133bis")).toBeInTheDocument();
     expect(await screen.findByText("Every 60 minutes")).toBeInTheDocument();
     expect(await screen.findByText("6 tracked roots")).toBeInTheDocument();
@@ -135,28 +159,7 @@ describe("SettingsPage", () => {
         return Promise.resolve(runtimePathsMock());
       }
       if (command === "gpp_catalog_status") {
-        return Promise.resolve({
-          catalogRoot:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
-          manifestCount: 7,
-          recordCount: 2696,
-          indexCount: 2,
-          seedVersion: "stage-seed-2026-07-02",
-          seedGeneratedAt: "2026-07-02T00:00:00Z",
-          seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
-          backgroundRefreshEnabled: true,
-          backgroundRefreshIntervalMinutes: 60,
-          backgroundRefreshTrackedRoots: 6,
-          backgroundRefreshMeetingWindow: 8,
-          backgroundRefreshState: "succeeded",
-          backgroundRefreshLastStartedAt: "2026-07-03T08:00:00Z",
-          backgroundRefreshLastCompletedAt: "2026-07-03T08:01:00Z",
-          backgroundRefreshLastError: null,
-          backgroundRefreshLastRefreshedManifestCount: 12,
-          backgroundRefreshLogPath:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
-          lastCheckedAt: "2026-07-01T08:00:00Z",
-        });
+        return Promise.resolve(catalogStatusMock());
       }
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
@@ -190,28 +193,7 @@ describe("SettingsPage", () => {
         return Promise.resolve(runtimePathsMock());
       }
       if (command === "gpp_catalog_status") {
-        return Promise.resolve({
-          catalogRoot:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
-          manifestCount: 7,
-          recordCount: 2696,
-          indexCount: 2,
-          seedVersion: "stage-seed-2026-07-02",
-          seedGeneratedAt: "2026-07-02T00:00:00Z",
-          seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
-          backgroundRefreshEnabled: true,
-          backgroundRefreshIntervalMinutes: 60,
-          backgroundRefreshTrackedRoots: 6,
-          backgroundRefreshMeetingWindow: 8,
-          backgroundRefreshState: "succeeded",
-          backgroundRefreshLastStartedAt: "2026-07-03T08:00:00Z",
-          backgroundRefreshLastCompletedAt: "2026-07-03T08:01:00Z",
-          backgroundRefreshLastError: null,
-          backgroundRefreshLastRefreshedManifestCount: 12,
-          backgroundRefreshLogPath:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
-          lastCheckedAt: "2026-07-01T08:00:00Z",
-        });
+        return Promise.resolve(catalogStatusMock());
       }
       if (command === "set_workspace_root") {
         expect(args).toEqual({ workspaceRoot: "E:\\WirelessResearch" });
@@ -240,27 +222,7 @@ describe("SettingsPage", () => {
 
   it("toggles scheduled update from Settings", async () => {
     const user = userEvent.setup();
-    const enabledStatus = {
-      catalogRoot: "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
-      manifestCount: 7,
-      recordCount: 2696,
-      indexCount: 2,
-      seedVersion: "stage-seed-2026-07-02",
-      seedGeneratedAt: "2026-07-02T00:00:00Z",
-      seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
-      backgroundRefreshEnabled: true,
-      backgroundRefreshIntervalMinutes: 60,
-      backgroundRefreshTrackedRoots: 6,
-      backgroundRefreshMeetingWindow: 8,
-      backgroundRefreshState: "succeeded",
-      backgroundRefreshLastStartedAt: "2026-07-03T08:00:00Z",
-      backgroundRefreshLastCompletedAt: "2026-07-03T08:01:00Z",
-      backgroundRefreshLastError: null,
-      backgroundRefreshLastRefreshedManifestCount: 12,
-      backgroundRefreshLogPath:
-        "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
-      lastCheckedAt: "2026-07-01T08:00:00Z",
-    };
+    const enabledStatus = catalogStatusMock();
     const disabledStatus = {
       ...enabledStatus,
       backgroundRefreshEnabled: false,
@@ -312,28 +274,14 @@ describe("SettingsPage", () => {
         return Promise.resolve(runtimePathsMock());
       }
       if (command === "gpp_catalog_status") {
-        return Promise.resolve({
-          catalogRoot:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\metadata\\3gpp\\catalog",
-          manifestCount: 7,
-          recordCount: 2696,
-          indexCount: 2,
-          seedVersion: "stage-seed-2026-07-02",
-          seedGeneratedAt: rawSeedGenerated,
-          seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
-          backgroundRefreshEnabled: true,
-          backgroundRefreshIntervalMinutes: 60,
-          backgroundRefreshTrackedRoots: 6,
-          backgroundRefreshMeetingWindow: 8,
-          backgroundRefreshState: "succeeded",
-          backgroundRefreshLastStartedAt: rawStarted,
-          backgroundRefreshLastCompletedAt: rawCompleted,
-          backgroundRefreshLastError: null,
-          backgroundRefreshLastRefreshedManifestCount: 12,
-          backgroundRefreshLogPath:
-            "C:\\Users\\alice\\AppData\\Roaming\\SpectrumPilot\\logs\\3gpp-refresh.log",
-          lastCheckedAt: rawLastChecked,
-        });
+        return Promise.resolve(
+          catalogStatusMock({
+            seedGeneratedAt: rawSeedGenerated,
+            backgroundRefreshLastStartedAt: rawStarted,
+            backgroundRefreshLastCompletedAt: rawCompleted,
+            lastCheckedAt: rawLastChecked,
+          }),
+        );
       }
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
