@@ -18,6 +18,7 @@ import {
   Space,
   Steps,
   Switch,
+  Tag,
   Typography,
 } from "antd";
 
@@ -36,12 +37,21 @@ import {
 
 type LookupStage = "idle" | "starting" | "resolving" | "downloading" | "extracting" | "opening" | "complete" | "error" | "cancelled";
 type SearchWindow = "fast-recent" | "from-meeting" | "deep-search";
+type BatchLookupState = "pending" | "running" | "done" | "error" | "cancelled";
 
 type ProgressState = {
   stage: LookupStage;
   message: string;
   percent: number;
   searchedUrlCount: number;
+};
+
+type BatchLookupItem = {
+  id: string;
+  query: string;
+  state: BatchLookupState;
+  message: string;
+  jobId?: string;
 };
 
 const INITIAL_PROGRESS: ProgressState = {
@@ -89,6 +99,8 @@ export function GppPage() {
   const [meetingHint, setMeetingHint] = useState("");
   const [searchWindow, setSearchWindow] = useState<SearchWindow>("fast-recent");
   const [openAfterDownload, setOpenAfterDownload] = useState(true);
+  const [batchInput, setBatchInput] = useState("");
+  const [batchItems, setBatchItems] = useState<BatchLookupItem[]>([]);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [progressModalOpen, setProgressModalOpen] = useState(false);
   const [progress, setProgress] = useState<ProgressState>(INITIAL_PROGRESS);
@@ -96,6 +108,9 @@ export function GppPage() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const activeJobIdRef = useRef<string | null>(null);
   const acceptingProgressRef = useRef(false);
+  const batchItemsRef = useRef<BatchLookupItem[]>([]);
+  const batchRunningRef = useRef(false);
+  const activeBatchItemIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +138,18 @@ export function GppPage() {
         return;
       }
       setProgress(progressFromEvent(event));
+      if (activeBatchItemIdRef.current) {
+        updateBatchItem(activeBatchItemIdRef.current, {
+          jobId: event.jobId,
+          state: event.stage === "error" ? "error" : event.stage === "cancelled" ? "cancelled" : "running",
+          message: event.message,
+        });
+        if (event.stage === "error" || event.stage === "cancelled") {
+          finishActiveBatchItem();
+          setProgressModalOpen(false);
+          void startNextBatchItem();
+        }
+      }
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -133,6 +160,22 @@ export function GppPage() {
 
     listenGppLookupComplete((event) => {
       if (!acceptJobEvent(event.jobId)) {
+        return;
+      }
+      if (activeBatchItemIdRef.current) {
+        updateBatchItem(activeBatchItemIdRef.current, {
+          jobId: event.jobId,
+          state: "done",
+          message: event.message,
+        });
+        setLastComplete(event);
+        setLookupError(null);
+        finishActiveBatchItem();
+        setProgressModalOpen(false);
+        getGppCatalogStatus()
+          .then(setCatalogStatus)
+          .catch(() => undefined);
+        void startNextBatchItem();
         return;
       }
       setProgress({
@@ -177,6 +220,7 @@ export function GppPage() {
 
   const currentStep = currentProgressStep(progress.stage);
   const progressStatus = progress.stage === "error" ? "exception" : progress.stage === "complete" ? "success" : "active";
+  const batchHasActiveItems = batchItems.some((item) => item.state === "pending" || item.state === "running");
 
   async function handleLookup(event?: FormEvent) {
     event?.preventDefault();
@@ -224,6 +268,81 @@ export function GppPage() {
     }
   }
 
+  async function handleStartBatch() {
+    const queries = parseBatchQueries(batchInput);
+    if (queries.length === 0) {
+      setLookupError("Enter one query per line for batch lookup.");
+      return;
+    }
+    if (!canStartGppLookupJob()) {
+      setLookupError("3GPP lookup requires the SpectrumPilot desktop runtime.");
+      return;
+    }
+
+    const nextItems = queries.map((batchQuery, index) => ({
+      id: `batch-${Date.now()}-${index}`,
+      query: batchQuery,
+      state: "pending" as const,
+      message: "Waiting",
+    }));
+    setLookupError(null);
+    setLastComplete(null);
+    commitBatchItems(nextItems);
+    batchRunningRef.current = true;
+    activeBatchItemIdRef.current = null;
+    activeJobIdRef.current = null;
+    setActiveJobId(null);
+    await startNextBatchItem();
+  }
+
+  async function startNextBatchItem() {
+    if (!batchRunningRef.current || activeBatchItemIdRef.current) {
+      return;
+    }
+    const nextItem = batchItemsRef.current.find((item) => item.state === "pending");
+    if (!nextItem) {
+      batchRunningRef.current = false;
+      return;
+    }
+
+    activeBatchItemIdRef.current = nextItem.id;
+    activeJobIdRef.current = null;
+    acceptingProgressRef.current = true;
+    setActiveJobId(null);
+    setProgress(INITIAL_PROGRESS);
+    setProgressModalOpen(true);
+    updateBatchItem(nextItem.id, {
+      state: "running",
+      message: "Starting lookup...",
+    });
+
+    try {
+      const started = await startGppLookupJob({
+        query: nextItem.query,
+        mode: lookupMode,
+        workGroup: workGroup || null,
+        meetingHint: meetingHint.trim() || null,
+        searchWindow,
+        openAfterDownload,
+      });
+      activeJobIdRef.current = started.jobId;
+      setActiveJobId(started.jobId);
+      updateBatchItem(nextItem.id, {
+        jobId: started.jobId,
+        state: "running",
+        message: "Lookup running.",
+      });
+    } catch (source) {
+      updateBatchItem(nextItem.id, {
+        state: "error",
+        message: messageFromError(source),
+      });
+      finishActiveBatchItem();
+      setProgressModalOpen(false);
+      await startNextBatchItem();
+    }
+  }
+
   async function handleCancelJob() {
     const jobId = activeJobIdRef.current ?? activeJobId;
     setProgressModalOpen(false);
@@ -235,10 +354,37 @@ export function GppPage() {
     setActiveJobId(null);
     activeJobIdRef.current = null;
     acceptingProgressRef.current = false;
+    if (activeBatchItemIdRef.current) {
+      updateBatchItem(activeBatchItemIdRef.current, {
+        state: "cancelled",
+        message: "Lookup cancelled.",
+        jobId: jobId ?? undefined,
+      });
+      activeBatchItemIdRef.current = null;
+    }
 
     if (jobId) {
       await cancelGppLookupJob(jobId).catch(() => false);
     }
+    if (batchRunningRef.current) {
+      await startNextBatchItem();
+    }
+  }
+
+  function commitBatchItems(items: BatchLookupItem[]) {
+    batchItemsRef.current = items;
+    setBatchItems(items);
+  }
+
+  function updateBatchItem(id: string, patch: Partial<BatchLookupItem>) {
+    commitBatchItems(batchItemsRef.current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function finishActiveBatchItem() {
+    setActiveJobId(null);
+    activeJobIdRef.current = null;
+    activeBatchItemIdRef.current = null;
+    acceptingProgressRef.current = false;
   }
 
   function acceptJobEvent(jobId: string) {
@@ -342,6 +488,44 @@ export function GppPage() {
             ]}
           />
         </form>
+
+        <div className="batch-lookup">
+          <div className="batch-header">
+            <Typography.Title level={5} className="section-title">
+              Batch Lookup
+            </Typography.Title>
+            <Button onClick={handleStartBatch} disabled={batchHasActiveItems}>
+              Start batch
+            </Button>
+          </div>
+          <label className="search-label" htmlFor="gpp-batch-queries">
+            Batch queries
+          </label>
+          <Input.TextArea
+            id="gpp-batch-queries"
+            aria-label="Batch queries"
+            value={batchInput}
+            onChange={(event) => setBatchInput(event.target.value)}
+            placeholder={"R2-2601401\n38.321\nS2-260001"}
+            rows={3}
+          />
+          {batchItems.length > 0 && (
+            <div className="batch-table" aria-label="Batch lookup queue">
+              <div className="batch-row batch-head">
+                <span>Query</span>
+                <span>Status</span>
+                <span>Message</span>
+              </div>
+              {batchItems.map((item) => (
+                <div className="batch-row" key={item.id}>
+                  <code>{item.query}</code>
+                  <BatchStateTag state={item.state} />
+                  <span>{item.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {lookupError && <Alert className="lookup-alert" type="error" showIcon title={lookupError} />}
       </section>
@@ -523,6 +707,42 @@ function cacheStatusLabel(status: GppLookupComplete["cacheStatus"]) {
     case "downloaded":
       return "Downloaded from 3GPP FTP";
   }
+}
+
+function parseBatchQueries(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function BatchStateTag({ state }: { state: BatchLookupState }) {
+  const color =
+    state === "done"
+      ? "success"
+      : state === "running"
+        ? "processing"
+        : state === "error"
+          ? "error"
+          : state === "cancelled"
+            ? "default"
+            : "warning";
+  const label =
+    state === "done"
+      ? "Done"
+      : state === "running"
+        ? "Running"
+        : state === "error"
+          ? "Error"
+          : state === "cancelled"
+            ? "Cancelled"
+            : "Pending";
+
+  return (
+    <Tag color={color} className="status-tag">
+      {label}
+    </Tag>
+  );
 }
 
 function messageFromError(source: unknown) {

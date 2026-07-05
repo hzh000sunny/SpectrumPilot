@@ -227,6 +227,64 @@ body {
   margin-top: 12px;
 }
 
+.batch-lookup {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.batch-table {
+  display: grid;
+  margin-top: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.batch-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.9fr) minmax(100px, 0.35fr) minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 12px;
+  border-top: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+.batch-row:first-child {
+  border-top: 0;
+}
+
+.batch-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.batch-row code {
+  color: #111827;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.batch-head {
+  min-height: 36px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .search-controls input:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);

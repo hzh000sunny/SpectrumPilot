@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -220,4 +220,145 @@ describe("GppPage", () => {
     expect(screen.getByText("Opened cached document")).toBeInTheDocument();
     expect(screen.getByText("Opened cached R2-2601401.")).toBeInTheDocument();
   });
+
+  it("runs batch queries sequentially and marks pending, running, done, and error rows", async () => {
+    const user = userEvent.setup();
+    let progressHandler: ((event: { payload: unknown }) => void) | undefined;
+    let completeHandler: ((event: { payload: unknown }) => void) | undefined;
+    const startedQueries: string[] = [];
+
+    listenMock.mockImplementation((event: string, handler: (event: { payload: unknown }) => void) => {
+      if (event === "gpp-job-progress") {
+        progressHandler = handler;
+      }
+      if (event === "gpp-job-complete") {
+        completeHandler = handler;
+      }
+      return Promise.resolve(() => undefined);
+    });
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "gpp_catalog_status") {
+        return Promise.resolve({
+          catalogRoot: "Preview only",
+          manifestCount: 0,
+          recordCount: 0,
+          indexCount: 0,
+          lastCheckedAt: null,
+        });
+      }
+      if (command === "start_gpp_lookup_job") {
+        const request = (args as { request: { query: string } }).request;
+        startedQueries.push(request.query);
+        return Promise.resolve({ jobId: `job-${startedQueries.length}` });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<GppPage />);
+
+    await user.type(
+      await screen.findByRole("textbox", { name: "Batch queries" }),
+      "R2-2601401\n38.321\nS2-260001",
+    );
+    await user.click(screen.getByRole("button", { name: "Start batch" }));
+
+    const queue = await screen.findByLabelText("Batch lookup queue");
+    expect(within(queue).getByText("R2-2601401")).toBeInTheDocument();
+    expect(within(queue).getByText("38.321")).toBeInTheDocument();
+    expect(within(queue).getByText("S2-260001")).toBeInTheDocument();
+    expect(within(queue).getByText("Running")).toBeInTheDocument();
+    expect(within(queue).getAllByText("Pending")).toHaveLength(2);
+    expect(startedQueries).toEqual(["R2-2601401"]);
+
+    act(() => {
+      completeHandler?.({
+        payload: lookupCompletePayload("job-1", "R2-2601401"),
+      });
+    });
+
+    await waitFor(() => {
+      expect(startedQueries).toEqual(["R2-2601401", "38.321"]);
+    });
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+
+    act(() => {
+      progressHandler?.({
+        payload: {
+          jobId: "job-2",
+          stage: "error",
+          message: "No archive file matched 38.321.",
+          progress: 100,
+          searchedUrlCount: 1,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(startedQueries).toEqual(["R2-2601401", "38.321", "S2-260001"]);
+    });
+    expect(await screen.findByText("Error")).toBeInTheDocument();
+
+    act(() => {
+      completeHandler?.({
+        payload: lookupCompletePayload("job-3", "S2-260001"),
+      });
+    });
+
+    expect(await screen.findAllByText("Done")).toHaveLength(2);
+    expect(screen.getByText("No archive file matched 38.321.")).toBeInTheDocument();
+  });
+
+  it("cancels only the active batch row and continues pending rows", async () => {
+    const user = userEvent.setup();
+    const startedQueries: string[] = [];
+
+    invokeMock.mockImplementation((command: string, args?: unknown) => {
+      if (command === "gpp_catalog_status") {
+        return Promise.resolve({
+          catalogRoot: "Preview only",
+          manifestCount: 0,
+          recordCount: 0,
+          indexCount: 0,
+          lastCheckedAt: null,
+        });
+      }
+      if (command === "start_gpp_lookup_job") {
+        const request = (args as { request: { query: string } }).request;
+        startedQueries.push(request.query);
+        return Promise.resolve({ jobId: `job-${startedQueries.length}` });
+      }
+      if (command === "cancel_gpp_lookup_job") {
+        return Promise.resolve(true);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<GppPage />);
+
+    await user.type(await screen.findByRole("textbox", { name: "Batch queries" }), "R2-2601401\n38.321");
+    await user.click(screen.getByRole("button", { name: "Start batch" }));
+    await screen.findByRole("dialog", { name: /3gpp lookup progress/i });
+
+    await user.click(screen.getByRole("button", { name: /close/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("cancel_gpp_lookup_job", { jobId: "job-1" });
+      expect(startedQueries).toEqual(["R2-2601401", "38.321"]);
+    });
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(await screen.findByText("Running")).toBeInTheDocument();
+  });
 });
+
+function lookupCompletePayload(jobId: string, query: string) {
+  return {
+    jobId,
+    query,
+    sourceUrl: `https://www.3gpp.org/ftp/${query}.zip`,
+    zipPath: `C:\\SpectrumPilotWorkspace\\3gpp\\${query}.zip`,
+    extractedPath: `C:\\SpectrumPilotWorkspace\\3gpp\\${query}`,
+    openedPath: `C:\\SpectrumPilotWorkspace\\3gpp\\${query}\\${query}.docx`,
+    cacheStatus: "downloaded",
+    message: `Downloaded and extracted ${query}.`,
+  };
+}
