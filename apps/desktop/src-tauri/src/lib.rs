@@ -7,6 +7,7 @@ use std::time::Duration;
 use chrono::Utc;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use spectrumpilot_3gpp_core::catalog::{
     manifest_path_for_url, merge_tdoc_index_shard, read_file_records, read_lookup_history_records,
@@ -37,7 +38,6 @@ static BUNDLED_CATALOG_SEED: Dir<'_> =
 
 const GPP_BACKGROUND_REFRESH_INTERVAL_MINUTES: u64 = 60;
 const GPP_BACKGROUND_REFRESH_MIN_INTERVAL_MINUTES: u64 = 5;
-const GPP_CATALOG_SEED_INSTALL_START_DELAY_SECS: u64 = 3;
 const GPP_BACKGROUND_REFRESH_START_DELAY_SECS: u64 = 15;
 const GPP_BACKGROUND_REFRESH_REQUEST_DELAY_SECS: u64 = 2;
 const GPP_BACKGROUND_REFRESH_MAX_MEETINGS_PER_WORKGROUP: usize = 8;
@@ -124,8 +124,6 @@ struct CatalogSeedMetadata {
     seed_version: String,
     seed_generated_at: Option<String>,
     seed_scope: String,
-    #[serde(default)]
-    catalog_download_manifest_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +162,7 @@ struct CatalogDownloadStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 struct CatalogDownloadManifest {
     record_type: String,
     schema_version: u32,
@@ -175,6 +174,7 @@ struct CatalogDownloadManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 struct CatalogDownloadManifestFile {
     path: String,
     size_bytes: u64,
@@ -508,7 +508,7 @@ fn install_bundled_catalog_seed_if_empty(
 ) -> std::result::Result<usize, String> {
     paths.ensure_dirs().map_err(|source| source.to_string())?;
     let mut installed = 0;
-    installed += install_seed_metadata_if_missing(paths.root())?;
+    installed += install_seed_root_json_files_if_missing(paths.root())?;
     installed += install_seed_subtree_if_empty("manifests", &paths.manifests_dir())?;
     installed += install_seed_subtree_if_empty("records", &paths.records_dir())?;
     installed += install_seed_subtree_if_empty("indexes", &paths.indexes_dir())?;
@@ -516,23 +516,29 @@ fn install_bundled_catalog_seed_if_empty(
     Ok(installed)
 }
 
-fn install_seed_metadata_if_missing(catalog_root: &Path) -> std::result::Result<usize, String> {
+fn install_seed_root_json_files_if_missing(
+    catalog_root: &Path,
+) -> std::result::Result<usize, String> {
     fs::create_dir_all(catalog_root)
         .map_err(|source| format!("failed to create {}: {source}", catalog_root.display()))?;
-    let target = catalog_root.join("seed.json");
-    if target.exists() {
-        return Ok(0);
+    let mut installed = 0;
+    for file in BUNDLED_CATALOG_SEED.files() {
+        if file.path().extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let target = catalog_root.join(file.path());
+        if target.exists() {
+            continue;
+        }
+        fs::write(&target, file.contents()).map_err(|source| {
+            format!(
+                "failed to install bundled 3GPP seed metadata {}: {source}",
+                target.display()
+            )
+        })?;
+        installed += 1;
     }
-    let Some(seed_file) = BUNDLED_CATALOG_SEED.get_file("seed.json") else {
-        return Ok(0);
-    };
-    fs::write(&target, seed_file.contents()).map_err(|source| {
-        format!(
-            "failed to install bundled 3GPP seed metadata {}: {source}",
-            target.display()
-        )
-    })?;
-    Ok(1)
+    Ok(installed)
 }
 
 fn install_seed_subtree_if_empty(
@@ -665,7 +671,6 @@ fn read_catalog_seed_metadata(
             seed_version: "unversioned-seed".to_string(),
             seed_generated_at: None,
             seed_scope: "Bundled 3GPP catalog seed".to_string(),
-            catalog_download_manifest_url: None,
         });
     };
     serde_json::from_slice(seed_file.contents())
@@ -701,6 +706,9 @@ fn infer_catalog_download_status(
     _summary: &CatalogSummary,
 ) -> CatalogDownloadStatus {
     let has_compact_summary = paths.root().join("compact").join("summary.json").exists();
+    let seed_version = read_catalog_seed_metadata(paths)
+        .ok()
+        .map(|metadata| metadata.seed_version);
     CatalogDownloadStatus {
         record_type: "3gpp-catalog-download-status".to_string(),
         state: if has_compact_summary {
@@ -708,8 +716,12 @@ fn infer_catalog_download_status(
         } else {
             "not_installed".to_string()
         },
-        source_url: None,
-        version: None,
+        source_url: if has_compact_summary {
+            Some("bundled-resource".to_string())
+        } else {
+            None
+        },
+        version: seed_version,
         last_attempt_at: None,
         last_success_at: None,
         last_error: None,
@@ -733,6 +745,7 @@ fn read_catalog_download_status(
         .map_err(|source| format!("failed to parse {}: {source}", path.display()))
 }
 
+#[cfg(test)]
 fn write_catalog_download_status(
     paths: &CatalogPaths,
     status: &CatalogDownloadStatus,
@@ -741,6 +754,7 @@ fn write_catalog_download_status(
         .map_err(|source| source.to_string())
 }
 
+#[cfg(test)]
 async fn install_catalog_seed_from_manifest_url(
     paths: &CatalogPaths,
     manifest_url: &str,
@@ -786,6 +800,7 @@ async fn install_catalog_seed_from_manifest_url(
     }
 }
 
+#[cfg(test)]
 async fn install_catalog_seed_from_manifest_url_inner(
     paths: &CatalogPaths,
     manifest_url: &str,
@@ -888,6 +903,7 @@ async fn install_catalog_seed_from_manifest_url_inner(
     Ok(status)
 }
 
+#[cfg(test)]
 async fn fetch_catalog_seed_bytes(
     client: &reqwest::Client,
     url: &str,
@@ -909,6 +925,7 @@ async fn fetch_catalog_seed_bytes(
         .map_err(|source| format!("failed to read {url}: {source}"))
 }
 
+#[cfg(test)]
 fn resolve_catalog_seed_file_url(
     manifest_url: &str,
     relative_path: &str,
@@ -928,6 +945,7 @@ fn resolve_catalog_seed_file_url(
         .map_err(|source| format!("invalid catalog file path {relative_path}: {source}"))
 }
 
+#[cfg(test)]
 fn validate_manifest_relative_path(path: &str) -> std::result::Result<(), String> {
     let relative = Path::new(path);
     if path.is_empty()
@@ -941,6 +959,7 @@ fn validate_manifest_relative_path(path: &str) -> std::result::Result<(), String
     Ok(())
 }
 
+#[cfg(test)]
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -1346,48 +1365,6 @@ fn spawn_background_gpp_catalog_refresh(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(sleep_minutes * 60)).await;
         }
     });
-}
-
-fn spawn_background_gpp_catalog_seed_install(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(
-            GPP_CATALOG_SEED_INSTALL_START_DELAY_SECS,
-        ))
-        .await;
-        if let Err(source) = install_configured_catalog_seed_for_app(&app).await {
-            eprintln!("SpectrumPilot 3GPP catalog seed install failed: {source}");
-        }
-    });
-}
-
-async fn install_configured_catalog_seed_for_app(
-    app: &AppHandle,
-) -> std::result::Result<(), String> {
-    let paths = app_catalog_paths(app)?;
-    let summary = summarize_catalog(&paths).map_err(|source| source.to_string())?;
-    if paths.root().join("compact").join("summary.json").exists() {
-        return Ok(());
-    }
-
-    let seed_metadata = read_catalog_seed_metadata(&paths)?;
-    let manifest_url = std::env::var("SPECTRUMPILOT_3GPP_CATALOG_MANIFEST_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or(seed_metadata.catalog_download_manifest_url)
-        .filter(|value| !value.trim().is_empty());
-    let Some(manifest_url) = manifest_url else {
-        write_catalog_download_status(&paths, &infer_catalog_download_status(&paths, &summary))?;
-        return Ok(());
-    };
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .user_agent("SpectrumPilot/0.1 3GPP catalog seed installer")
-        .build()
-        .map_err(|source| format!("failed to build catalog seed HTTP client: {source}"))?;
-    install_catalog_seed_from_manifest_url(&paths, &manifest_url, &client)
-        .await
-        .map(|_| ())
 }
 
 fn skip_disabled_background_refresh_for_app(app: &AppHandle) -> std::result::Result<(), String> {
@@ -2104,7 +2081,6 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(gpp::jobs::JobRegistry::default())
         .setup(|app| {
-            spawn_background_gpp_catalog_seed_install(app.handle().clone());
             spawn_background_gpp_catalog_refresh(app.handle().clone());
             Ok(())
         })
@@ -2639,14 +2615,16 @@ mod tests {
         let summary = spectrumpilot_3gpp_core::catalog::summarize_catalog(&paths).expect("summary");
         let second_install = install_bundled_catalog_seed_if_empty(&paths).expect("second install");
 
-        assert_eq!(installed, 1);
-        assert_eq!(summary.record_count, 0);
-        assert_eq!(summary.index_count, 0);
+        assert_eq!(installed, 78);
+        assert!(paths.root().join("download-manifest.json").exists());
+        assert!(paths.root().join("compact").join("summary.json").exists());
+        assert!(summary.record_count > 200_000);
+        assert_eq!(summary.index_count, 59);
         assert_eq!(second_install, 0);
     }
 
     #[test]
-    fn installs_missing_bootstrap_seed_metadata_when_manifests_exist() {
+    fn installs_missing_bundled_seed_without_overwriting_existing_overlay() {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths = CatalogPaths::new(temp.path());
         let existing_manifest = DirectoryManifest {
@@ -2666,8 +2644,8 @@ mod tests {
 
         assert!(installed > 0);
         assert_eq!(summary.manifest_count, 1);
-        assert_eq!(summary.record_count, 0);
-        assert_eq!(summary.index_count, 0);
+        assert!(summary.record_count > 200_000);
+        assert_eq!(summary.index_count, 59);
     }
 
     #[test]
@@ -2690,13 +2668,24 @@ mod tests {
         )
         .expect("status");
 
-        assert_eq!(status.seed_version, "bootstrap-seed-2026-07-05");
+        assert_eq!(
+            status.seed_version,
+            "compact-stage-seed-2026-07-05-recent-2024-2026"
+        );
         assert_eq!(
             status.seed_generated_at,
             Some("2026-07-05T00:00:00Z".to_string())
         );
-        assert!(status.seed_scope.contains("Bootstrap metadata only"));
-        assert_eq!(status.catalog_install_state, "not_installed");
+        assert!(status.seed_scope.contains("RAN/SA/CT 2024-2026"));
+        assert_eq!(status.catalog_install_state, "ready");
+        assert_eq!(
+            status.catalog_download_source.as_deref(),
+            Some("bundled-resource")
+        );
+        assert_eq!(
+            status.catalog_download_version.as_deref(),
+            Some("compact-stage-seed-2026-07-05-recent-2024-2026")
+        );
     }
 
     #[test]

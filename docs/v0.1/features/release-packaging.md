@@ -4,29 +4,32 @@ SpectrumPilot v0.1 ships as a Windows desktop application. The UI and backend ar
 
 ## Catalog Seed Delivery
 
-The packaged app only bundles bootstrap metadata at:
-
-```text
-apps/desktop/src-tauri/resources/3gpp/catalog_seed/seed.json
-```
-
-That bootstrap metadata points to the pinned v0.1 catalog manifest:
-
-```text
-https://raw.githubusercontent.com/hzh000sunny/SpectrumPilot/v0.1.0/data/3gpp/catalog_seed/download-manifest.json
-```
-
-The full compact catalog remains in the repository under:
+The staged compact catalog is committed in the repository at:
 
 ```text
 data/3gpp/catalog_seed/
 ```
 
-At runtime, SpectrumPilot downloads the manifest and every listed JSON file, validates file size and SHA-256, writes into a staging directory, and activates the catalog atomically. If this async install fails, 3GPP lookup still has online fallback behavior.
+Release builds bundle the same directory into Tauri resources at:
+
+```text
+apps/desktop/src-tauri/resources/3gpp/catalog_seed/
+```
+
+The resource catalog is not downloaded from GitHub Release on first launch. On startup, SpectrumPilot installs missing bundled JSON files into the internal application metadata catalog. It copies the root seed/support JSON files only when absent and copies each major seed subtree only when that target subtree is empty:
+
+```text
+manifests/
+records/
+indexes/
+compact/
+```
+
+This keeps a new install usable without network access while protecting upgraded users: a newer app version does not overwrite a local catalog that may already include later scheduled refresh data. If a lookup is not covered by the bundled seed, the normal online fallback still runs.
 
 The compact v1 index stores one default pointer per TDoc key. If the same TDoc key appears in more than one meeting directory, the seed builder keeps the first candidate after stable meeting sorting. A future compact schema can expand this to multiple pointers if duplicate-key candidate selection becomes important for offline-only lookup.
 
-Before creating the `v0.1.0` tag, verify the catalog seed offline:
+Before creating the `v0.1.0` tag, verify both the source seed and the Tauri resource seed offline:
 
 ```bash
 python3 scripts/3gpp/verify_compact_seed.py data/3gpp/catalog_seed
@@ -44,6 +47,8 @@ python3 scripts/3gpp/build_compact_seed.py \
   --scope "RAN/SA/CT 2024-2026 recent meeting Docs compact catalog converted from staged baseline; no network crawl during conversion" \
   --force
 ```
+
+After regenerating and reviewing `data/3gpp/catalog_seed/`, sync it into `apps/desktop/src-tauri/resources/3gpp/catalog_seed/` before building the installer. This sync is a release-preparation step, not a normal CI crawl or live website fetch.
 
 ## Windows Installer
 

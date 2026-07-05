@@ -29,7 +29,7 @@ The page is intentionally not a catalog diagnostics surface. Manifest, record, i
 
 The product should not ask users to initialize the 3GPP catalog after installation.
 
-SpectrumPilot supports a compact read-only seed catalog. On first startup, the app silently copies a small bootstrap seed into the internal application storage metadata directory. The bootstrap seed does not contain the full TDoc index. It exists so Settings can show seed/download state while the full compact catalog is installed asynchronously.
+SpectrumPilot supports a compact read-only seed catalog. The current release packages the staged catalog as a Tauri bundled resource, then silently copies it into the internal application storage metadata directory when the local catalog is empty. No first-launch network seed download or user initialization step is required.
 
 The 2024-2026 staged baseline was converted from the already fetched 350 MB sharded catalog without crawling 3GPP again. The compact release seed stores the same recent proposal coverage as 77 JSON files and about 18 MB:
 
@@ -43,9 +43,9 @@ indexShardCount: 59
 
 The compact format removes repeated full URLs and repeated JSON field names from per-file entries. Workgroup record shards share the base URL and meeting `Docs` path, while prefix/year index shards store only pointers into those records.
 
-The full compact catalog is committed under `data/3gpp/catalog_seed/` in the repository and includes `download-manifest.json` with file sizes and SHA-256 hashes. The installer resources under `apps/desktop/src-tauri/resources/3gpp/catalog_seed/` intentionally contain only bootstrap metadata and the default download manifest URL, so the desktop installer does not need to embed the full catalog. At runtime, SpectrumPilot downloads/copies every listed JSON file into a staging directory, validates each hash, and atomically activates the compact catalog.
+The full compact catalog is committed under `data/3gpp/catalog_seed/` in the repository and includes `download-manifest.json` with file sizes and SHA-256 hashes for offline validation. Release builds sync that directory into `apps/desktop/src-tauri/resources/3gpp/catalog_seed/`, so the installer embeds the staged compact catalog directly. At runtime, SpectrumPilot copies missing bundled JSON files into the internal metadata catalog. Existing local `manifests`, `records`, `indexes`, and `compact` subtrees are not overwritten, so an upgraded app does not discard data that the user already refreshed locally.
 
-If the download source is unavailable or fails, lookup still falls back to direct online probing and targeted listing search.
+If the bundled seed does not contain a requested item, lookup still falls back to direct online probing and targeted listing search.
 
 Release-stage compact seed generation is a manual, offline tooling step. It reads the already accumulated local catalog, including both legacy `records/*.json` file records and `records/tdoc/**/*.json` meeting shards, then writes the compact release artifact and download manifest:
 
@@ -59,9 +59,9 @@ python3 scripts/3gpp/build_compact_seed.py \
   --force
 ```
 
-This command is not intended to run during every build or every CI job. Near a release boundary, the project should first refresh or backfill the local catalog deliberately, then regenerate and review `data/3gpp/catalog_seed/`. The Tauri resource seed remains bootstrap-only unless the packaging strategy is explicitly changed.
+This command is not intended to run during every build or every CI job. Near a release boundary, the project should first refresh or backfill the local catalog deliberately, then regenerate and review `data/3gpp/catalog_seed/`. After review, sync the same directory into the Tauri resource catalog before building the release installer.
 
-Release packaging, pinned catalog URL, Windows installer, and updater details are tracked in [release-packaging.md](./release-packaging.md).
+Release packaging, bundled catalog resources, Windows installer, and updater details are tracked in [release-packaging.md](./release-packaging.md).
 
 ## Lookup Modes
 
@@ -191,14 +191,13 @@ Implemented now:
 - Compact 2024-2026 seed generated from the existing staged baseline without a new crawl.
 - Compact seed builder supports mixed local catalog sources: legacy single-file records and sharded meeting records.
 - Compact seed lookup before online fallback.
-- Asynchronous compact seed installation from a manifest URL with size and SHA-256 validation.
+- Bundled compact seed installation for empty internal metadata catalogs.
 - 3GPP storage, seed metadata, background refresh policy, and catalog status in Settings.
 - Conservative scheduled refresh of the supported `tsg_*` roots with parent/child manifest diffing and an 8-meeting per changed workgroup window.
 - Persisted background refresh state and last-error display in Settings.
 
 Still planned:
 
-- Configure the final GitHub Release catalog manifest URL for production releases.
 - Full historical backfill beyond the current recent-years scope.
 - Release-final stage seed regeneration after a deliberate full refresh/backfill pass.
 - Proposal Library indexing and filtering beyond latest lookup history.

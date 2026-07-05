@@ -40,18 +40,18 @@ function catalogStatusMock(overrides: Record<string, unknown> = {}) {
     recordCount: 2696,
     indexCount: 2,
     catalogInstallState: "ready",
-    catalogDownloadSource:
-      "https://github.com/hzh000sunny/SpectrumPilot/releases/download/catalog/3gpp-compact.json",
-    catalogDownloadVersion: "compact-stage-seed-2026-07-05",
-    catalogDownloadLastAttemptAt: "2026-07-05T08:00:00Z",
-    catalogDownloadLastSuccessAt: "2026-07-05T08:01:00Z",
+    catalogDownloadSource: "bundled-resource",
+    catalogDownloadVersion: "compact-stage-seed-2026-07-05-recent-2024-2026",
+    catalogDownloadLastAttemptAt: null,
+    catalogDownloadLastSuccessAt: null,
     catalogDownloadLastError: null,
-    catalogDownloadedBytes: 18 * 1024 * 1024,
-    catalogDownloadExpectedBytes: 18 * 1024 * 1024,
-    catalogDownloadSha256: "abc123",
-    seedVersion: "stage-seed-2026-07-02",
-    seedGeneratedAt: "2026-07-02T00:00:00Z",
-    seedScope: "RAN2 meetings TSGR2_132 and TSGR2_133bis",
+    catalogDownloadedBytes: null,
+    catalogDownloadExpectedBytes: null,
+    catalogDownloadSha256: null,
+    seedVersion: "compact-stage-seed-2026-07-05-recent-2024-2026",
+    seedGeneratedAt: "2026-07-05T00:00:00Z",
+    seedScope:
+      "RAN/SA/CT 2024-2026 recent meeting Docs compact catalog converted from staged baseline; no network crawl during conversion",
     backgroundRefreshEnabled: true,
     backgroundRefreshIntervalMinutes: 60,
     backgroundRefreshTrackedRoots: 6,
@@ -119,18 +119,24 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("switch", { name: "Enable scheduled update" })).toBeInTheDocument();
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(await screen.findByText("HTTP 429")).toBeInTheDocument();
-    expect(await screen.findByText("stage-seed-2026-07-02")).toBeInTheDocument();
-    expect(await screen.findByText("compact-stage-seed-2026-07-05")).toBeInTheDocument();
+    expect(
+      await screen.findAllByText("compact-stage-seed-2026-07-05-recent-2024-2026"),
+    ).toHaveLength(2);
+    expect(await screen.findByText("Bundled resource")).toBeInTheDocument();
     expect(await screen.findAllByText("Ready")).toHaveLength(2);
-    expect(await screen.findByText("18.0 MB / 18.0 MB")).toBeInTheDocument();
-    expect(await screen.findByText("RAN2 meetings TSGR2_132 and TSGR2_133bis")).toBeInTheDocument();
+    expect(await screen.findByText("No active install")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "RAN/SA/CT 2024-2026 recent meeting Docs compact catalog converted from staged baseline; no network crawl during conversion",
+      ),
+    ).toBeInTheDocument();
     expect(await screen.findByText("Every 60 minutes")).toBeInTheDocument();
     expect(await screen.findByText("6 tracked roots")).toBeInTheDocument();
     expect(await screen.findByText("8 recent meetings per changed workgroup")).toBeInTheDocument();
     expect(await screen.findByText("Last refresh started")).toBeInTheDocument();
     expect(screen.queryByText("2026-07-03T08:00:00Z")).not.toBeInTheDocument();
     expect(await screen.findByText("Last refresh completed")).toBeInTheDocument();
-    expect(await screen.findByText("Not completed")).toBeInTheDocument();
+    expect(await screen.findAllByText("Not completed")).toHaveLength(2);
     expect(await screen.findByText("Refresh log")).toBeInTheDocument();
     expect(
       await screen.findByText(

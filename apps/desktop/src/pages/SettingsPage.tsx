@@ -424,7 +424,7 @@ function GppSettingsContent({
               Catalog
             </Typography.Title>
             <Typography.Paragraph className="muted settings-panel-copy">
-              Local seed metadata, download state, and 3GPP index coverage.
+              Bundled seed metadata, local install state, and 3GPP index coverage.
             </Typography.Paragraph>
           </div>
           <CatalogInstallTag state={catalogStatus?.catalogInstallState} />
@@ -446,20 +446,24 @@ function GppSettingsContent({
         <div className="settings-table">
           <PathRow label="Seed version" value={catalogStatus?.seedVersion ?? "Loading"} />
           <PathRow
-            label="Download version"
+            label="Catalog source"
+            value={catalogSourceLabel(catalogStatus)}
+          />
+          <PathRow
+            label="Installed version"
             value={catalogStatus?.catalogDownloadVersion ?? "Not configured"}
           />
           <PathRow
-            label="Download progress"
-            value={catalogDownloadProgressLabel(catalogStatus)}
+            label="Install payload"
+            value={catalogInstallPayloadLabel(catalogStatus)}
           />
           <PathRow
-            label="Last download attempt"
+            label="Last install attempt"
             value={formatDisplayTimestamp(catalogStatus?.catalogDownloadLastAttemptAt, "Never")}
             title={catalogStatus?.catalogDownloadLastAttemptAt ?? undefined}
           />
           <PathRow
-            label="Last download success"
+            label="Last install success"
             value={formatDisplayTimestamp(
               catalogStatus?.catalogDownloadLastSuccessAt,
               "Not completed",
@@ -467,7 +471,7 @@ function GppSettingsContent({
             title={catalogStatus?.catalogDownloadLastSuccessAt ?? undefined}
           />
           <PathRow
-            label="Last download error"
+            label="Last install error"
             value={catalogStatus?.catalogDownloadLastError ?? "None"}
           />
           <PathRow
@@ -598,20 +602,30 @@ function catalogInstallLabel(catalogStatus: GppCatalogStatus | null) {
   }
 }
 
-function catalogDownloadProgressLabel(catalogStatus: GppCatalogStatus | null) {
+function catalogSourceLabel(catalogStatus: GppCatalogStatus | null) {
+  if (!catalogStatus) {
+    return "Loading";
+  }
+  if (catalogStatus.catalogDownloadSource === "bundled-resource") {
+    return "Bundled resource";
+  }
+  return catalogStatus.catalogDownloadSource ?? "Not configured";
+}
+
+function catalogInstallPayloadLabel(catalogStatus: GppCatalogStatus | null) {
   if (!catalogStatus) {
     return "Loading";
   }
   const downloaded = catalogStatus.catalogDownloadedBytes;
   const expected = catalogStatus.catalogDownloadExpectedBytes;
   if (downloaded == null && expected == null) {
-    return "No active download";
+    return "No active install";
   }
   if (downloaded != null && expected != null && expected > 0) {
     return `${formatBytes(downloaded)} / ${formatBytes(expected)}`;
   }
   if (downloaded != null) {
-    return `${formatBytes(downloaded)} downloaded`;
+    return `${formatBytes(downloaded)} installed`;
   }
   return `${formatBytes(expected ?? 0)} expected`;
 }
