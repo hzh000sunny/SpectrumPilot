@@ -35,6 +35,24 @@ fn maps_plenary_and_workgroup_prefixes() {
 }
 
 #[test]
+fn maps_default_start_meetings_for_ran_sa_and_ct_sources() {
+    let cases = [
+        ("RP", "RAN", Some("TSGR_100")),
+        ("R2", "RAN2", Some("TSGR2_120")),
+        ("SP", "SA", Some("TSGS_100")),
+        ("S2", "SA2", Some("TSGS2_170")),
+        ("CP", "CT", Some("TSGC_100")),
+        ("C1", "CT1", Some("TSGC1_145")),
+    ];
+
+    for (prefix, work_group, start) in cases {
+        let source = source_for_tdoc_prefix(prefix).expect(prefix);
+        assert_eq!(source.work_group_code, work_group);
+        assert_eq!(source.default_start_meeting.as_deref(), start, "{prefix}");
+    }
+}
+
+#[test]
 fn builds_exact_direct_probe_url() {
     let tdoc = normalize_tdoc_query("R2-2601401").expect("tdoc");
     let source = source_for_tdoc_prefix(&tdoc.prefix).expect("source");

@@ -7,6 +7,7 @@ pub struct TDocSource {
     pub work_group_code: String,
     pub work_group_url: String,
     pub meeting_series_prefix: String,
+    pub default_start_meeting: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

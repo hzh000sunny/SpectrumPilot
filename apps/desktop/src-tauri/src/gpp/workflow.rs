@@ -15,6 +15,7 @@ use spectrumpilot_3gpp_core::model::{
     DirectoryRole, EntryKind, FileClassification, FileRecord, MeetingRecord, TDocKey,
     TDocMeetingRecordShard,
 };
+use spectrumpilot_3gpp_core::normalize::TDocSource;
 use spectrumpilot_3gpp_core::query::{
     parse_gpp_query, ContributionQuery, GppQuery, SpecificationQuery,
 };
@@ -482,7 +483,7 @@ async fn probe_meeting_candidates(
         .filter(|child| child.name.starts_with(&source.meeting_series_prefix))
         .map(|child| child.name.clone())
         .collect::<Vec<_>>();
-    let min_meeting_number = requested_min_meeting_number(request, query, &source.work_group_code);
+    let min_meeting_number = requested_min_meeting_number(request, query, source);
     meetings.retain(|meeting| {
         meeting_number_from_slug(meeting)
             .map(|number| number >= min_meeting_number)
@@ -903,7 +904,7 @@ fn normalize_meeting_hint(series_prefix: &str, hint: &str) -> String {
 fn requested_min_meeting_number(
     request: &GppLookupRequest,
     query: &ContributionQuery,
-    work_group_code: &str,
+    source: &TDocSource,
 ) -> u32 {
     let explicit = request
         .meeting_hint
@@ -912,20 +913,13 @@ fn requested_min_meeting_number(
         .or(query.start_meeting.as_deref())
         .and_then(meeting_number_from_slug);
     explicit
-        .or_else(|| default_start_meeting(work_group_code).and_then(meeting_number_from_slug))
+        .or_else(|| {
+            source
+                .default_start_meeting
+                .as_deref()
+                .and_then(meeting_number_from_slug)
+        })
         .unwrap_or(0)
-}
-
-fn default_start_meeting(work_group_code: &str) -> Option<&'static str> {
-    match work_group_code {
-        "RAN" => Some("TSGR_100"),
-        "RAN1" => Some("TSGR1_105"),
-        "RAN2" => Some("TSGR2_120"),
-        "RAN3" => Some("TSGR3_120"),
-        "RAN4" => Some("TSGR4_100"),
-        "RAN5" => Some("TSGR5_100"),
-        _ => None,
-    }
 }
 
 fn meeting_number_from_slug(slug: &str) -> Option<u32> {
@@ -986,11 +980,13 @@ mod tests {
     use spectrumpilot_3gpp_core::specs::{
         archive_directory_url, archive_file_name, select_latest_spec_file,
     };
+    use spectrumpilot_3gpp_core::tdoc::source_for_tdoc_prefix;
 
     use super::super::download::{download_zip, extract_zip, resolve_open_path, tdoc_extract_dir};
     use super::{
         classify_local_download_cache, is_successful_exact_probe, probe_exact_file,
-        resolve_indexed_contribution_record, write_tdoc_shards_for_records, LocalDownloadCache,
+        requested_min_meeting_number, resolve_indexed_contribution_record,
+        write_tdoc_shards_for_records, GppLookupRequest, LocalDownloadCache,
     };
 
     #[test]
@@ -1139,6 +1135,41 @@ mod tests {
                 .expect("classify"),
             LocalDownloadCache::Missing
         );
+    }
+
+    #[test]
+    fn requested_min_meeting_number_uses_source_defaults_for_sa_and_ct() {
+        let request = GppLookupRequest {
+            query: "S2-260001".to_string(),
+            mode: "proposal".to_string(),
+            work_group: None,
+            meeting_hint: None,
+            search_window: "fast-recent".to_string(),
+            open_after_download: true,
+        };
+        let query = match parse_gpp_query("S2-260001").expect("query") {
+            GppQuery::Contribution(query) => query,
+            GppQuery::Specification(_) => panic!("expected contribution query"),
+        };
+        let source = source_for_tdoc_prefix("S2").expect("S2 source");
+
+        assert_eq!(requested_min_meeting_number(&request, &query, &source), 170);
+
+        let request = GppLookupRequest {
+            query: "C1-260001".to_string(),
+            mode: "proposal".to_string(),
+            work_group: None,
+            meeting_hint: None,
+            search_window: "fast-recent".to_string(),
+            open_after_download: true,
+        };
+        let query = match parse_gpp_query("C1-260001").expect("query") {
+            GppQuery::Contribution(query) => query,
+            GppQuery::Specification(_) => panic!("expected contribution query"),
+        };
+        let source = source_for_tdoc_prefix("C1").expect("C1 source");
+
+        assert_eq!(requested_min_meeting_number(&request, &query, &source), 145);
     }
 
     #[tokio::test]
