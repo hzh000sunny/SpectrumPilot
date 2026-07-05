@@ -2121,6 +2121,7 @@ pub fn run() {
             download_gpp_tdoc,
             gpp::workflow::start_gpp_lookup_job,
             gpp::workflow::cancel_gpp_lookup_job,
+            gpp::workflow::continue_gpp_lookup_with_candidate,
             catalog_root
         ])
         .run(tauri::generate_context!())

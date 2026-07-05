@@ -34,7 +34,10 @@ use super::download::{
     cached_open_path, download_zip, extract_zip, has_cached_zip, resolve_open_path,
     spec_extract_dir, tdoc_extract_dir, zip_path_for_extract_dir,
 };
-use super::jobs::{GppLookupComplete, GppLookupJobStarted, GppLookupProgress, JobRegistry};
+use super::jobs::{
+    GppLookupCandidate, GppLookupCandidates, GppLookupComplete, GppLookupJobStarted,
+    GppLookupProgress, JobRegistry,
+};
 
 type LookupResult<T> = Result<T, LookupError>;
 
@@ -74,6 +77,12 @@ struct DownloadTarget {
     extract_dir: PathBuf,
     open_stem: String,
     message: String,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateProbeResult {
+    candidates: Vec<GppLookupCandidate>,
+    searched_url_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +126,7 @@ async fn run_lookup_job(
     token: CancellationToken,
     request: GppLookupRequest,
 ) {
-    let result = run_lookup_job_inner(&app, &job_id, &token, request.clone()).await;
+    let result = run_lookup_job_inner(&app, &registry, &job_id, &token, request.clone()).await;
 
     match result {
         Ok(complete) => {
@@ -143,6 +152,7 @@ async fn run_lookup_job(
 
 async fn run_lookup_job_inner(
     app: &AppHandle,
+    registry: &JobRegistry,
     job_id: &str,
     token: &CancellationToken,
     request: GppLookupRequest,
@@ -163,8 +173,32 @@ async fn run_lookup_job_inner(
             resolve_specification(app, job_id, token, request, query, &client, workspace_root).await
         }
         GppQuery::Contribution(query) => {
-            resolve_contribution(app, job_id, token, request, query, &client, workspace_root).await
+            resolve_contribution(
+                app,
+                registry,
+                job_id,
+                token,
+                request,
+                query,
+                &client,
+                workspace_root,
+            )
+            .await
         }
+    }
+}
+
+#[tauri::command]
+pub async fn continue_gpp_lookup_with_candidate(
+    _app: AppHandle,
+    registry: tauri::State<'_, JobRegistry>,
+    job_id: String,
+    candidate: GppLookupCandidate,
+) -> Result<(), String> {
+    if registry.choose_candidate(&job_id, candidate) {
+        Ok(())
+    } else {
+        Err(format!("No pending candidate selection for job {job_id}."))
     }
 }
 
@@ -321,6 +355,7 @@ async fn resolve_specification(
 
 async fn resolve_contribution(
     app: &AppHandle,
+    registry: &JobRegistry,
     job_id: &str,
     token: &CancellationToken,
     request: GppLookupRequest,
@@ -418,7 +453,7 @@ async fn resolve_contribution(
     }
 
     check_cancelled(token)?;
-    if let Some((meeting_slug, url, probed_count)) = probe_meeting_candidates(
+    let probe_result = probe_meeting_candidates(
         app,
         job_id,
         token,
@@ -428,17 +463,52 @@ async fn resolve_contribution(
         &source,
         searched_url_count,
     )
-    .await?
-    {
-        searched_url_count = probed_count;
-        cache_direct_contribution_record(app, &source, &meeting_slug, &query.tdoc, &url);
-        let target = contribution_target_from_direct_url(
-            &workspace_root,
-            &source.work_group_code,
-            &meeting_slug,
-            &query.tdoc.key,
-            &url,
+    .await?;
+    searched_url_count = probe_result.searched_url_count;
+    if probe_result.candidates.len() == 1 {
+        let candidate = probe_result
+            .candidates
+            .first()
+            .expect("candidate length checked")
+            .clone();
+        cache_direct_contribution_record(
+            app,
+            &source,
+            &candidate.meeting,
+            &query.tdoc,
+            &candidate.source_url,
         );
+        let target = contribution_target_from_candidate(&workspace_root, &candidate);
+        return download_extract_open(
+            app,
+            job_id,
+            token,
+            &request,
+            client,
+            target,
+            searched_url_count,
+        )
+        .await;
+    }
+    if probe_result.candidates.len() > 1 {
+        let candidate = wait_for_candidate_selection(
+            app,
+            registry,
+            job_id,
+            token,
+            &query.tdoc.key,
+            &probe_result.candidates,
+            searched_url_count,
+        )
+        .await?;
+        cache_direct_contribution_record(
+            app,
+            &source,
+            &candidate.meeting,
+            &query.tdoc,
+            &candidate.source_url,
+        );
+        let target = contribution_target_from_candidate(&workspace_root, &candidate);
         return download_extract_open(
             app,
             job_id,
@@ -467,6 +537,32 @@ async fn resolve_contribution(
     let Some(record) = records.first() else {
         return Err(format!("No matching proposal was found for {}.", query.tdoc.key).into());
     };
+    if records.len() > 1 {
+        let candidates = candidates_from_records(&records);
+        if candidates.len() > 1 {
+            let candidate = wait_for_candidate_selection(
+                app,
+                registry,
+                job_id,
+                token,
+                &query.tdoc.key,
+                &candidates,
+                searched_url_count,
+            )
+            .await?;
+            let target = contribution_target_from_candidate(&workspace_root, &candidate);
+            return download_extract_open(
+                app,
+                job_id,
+                token,
+                &request,
+                client,
+                target,
+                searched_url_count,
+            )
+            .await;
+        }
+    }
     let target = contribution_target_from_record(record, &workspace_root)?;
     download_extract_open(
         app,
@@ -489,7 +585,7 @@ async fn probe_meeting_candidates(
     query: &ContributionQuery,
     source: &spectrumpilot_3gpp_core::normalize::TDocSource,
     searched_url_count: usize,
-) -> LookupResult<Option<(String, String, usize)>> {
+) -> LookupResult<CandidateProbeResult> {
     emit_progress(
         app,
         job_id,
@@ -532,6 +628,7 @@ async fn probe_meeting_candidates(
 
     let expected_file_name = format!("{}.zip", query.tdoc.key);
     let mut searched = searched_url_count + 1;
+    let mut candidates = Vec::new();
 
     for chunk in meetings.chunks(12) {
         check_cancelled(token)?;
@@ -566,13 +663,20 @@ async fn probe_meeting_candidates(
                 continue;
             };
             if matched {
-                tasks.abort_all();
-                return Ok(Some((meeting_slug, url, searched)));
+                candidates.push(GppLookupCandidate {
+                    tdoc: query.tdoc.key.clone(),
+                    source_url: url,
+                    work_group: source.work_group_code.clone(),
+                    meeting: meeting_slug,
+                });
             }
         }
     }
 
-    Ok(None)
+    Ok(CandidateProbeResult {
+        candidates,
+        searched_url_count: searched,
+    })
 }
 
 async fn download_extract_open(
@@ -794,6 +898,83 @@ fn contribution_target_from_direct_url(
         extract_dir: tdoc_extract_dir(workspace_root, work_group, meeting_slug, tdoc_key),
         open_stem: tdoc_key.to_string(),
         message: format!("Downloaded and extracted {tdoc_key}."),
+    }
+}
+
+fn contribution_target_from_candidate(
+    workspace_root: &std::path::Path,
+    candidate: &GppLookupCandidate,
+) -> DownloadTarget {
+    contribution_target_from_direct_url(
+        workspace_root,
+        &candidate.work_group,
+        &candidate.meeting,
+        &candidate.tdoc,
+        &candidate.source_url,
+    )
+}
+
+fn candidates_from_records(records: &[FileRecord]) -> Vec<GppLookupCandidate> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let tdoc = record
+                .tdoc
+                .as_ref()
+                .map(|tdoc| tdoc.key.clone())
+                .unwrap_or_else(|| record.file_name.trim_end_matches(".zip").to_string());
+            Some(GppLookupCandidate {
+                tdoc,
+                source_url: record.canonical_url.clone(),
+                work_group: record.work_group_code.clone()?,
+                meeting: record.meeting_slug.clone()?,
+            })
+        })
+        .collect()
+}
+
+async fn wait_for_candidate_selection(
+    app: &AppHandle,
+    registry: &JobRegistry,
+    job_id: &str,
+    token: &CancellationToken,
+    query: &str,
+    candidates: &[GppLookupCandidate],
+    searched_url_count: usize,
+) -> LookupResult<GppLookupCandidate> {
+    emit_progress(
+        app,
+        job_id,
+        "candidate",
+        format!(
+            "{} exact candidates found. Select one to download.",
+            candidates.len()
+        ),
+        Some(58),
+        searched_url_count,
+    );
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    registry.register_candidate_waiter(job_id, sender);
+    let _ = app.emit(
+        "gpp-job-candidates",
+        GppLookupCandidates {
+            job_id: job_id.to_string(),
+            query: query.to_string(),
+            candidates: candidates.to_vec(),
+        },
+    );
+
+    tokio::select! {
+        _ = token.cancelled() => Err(LookupError::Cancelled),
+        selected = receiver => {
+            let selected = selected.map_err(|_| LookupError::Cancelled)?;
+            if candidates.contains(&selected) {
+                Ok(selected)
+            } else {
+                Err("Selected candidate was not offered by this lookup job.".into())
+            }
+        }
     }
 }
 

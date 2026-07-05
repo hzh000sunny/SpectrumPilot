@@ -25,11 +25,15 @@ import {
 import {
   cancelGppLookupJob,
   canStartGppLookupJob,
+  continueGppLookupWithCandidate,
   getGppCatalogStatus,
+  listenGppLookupCandidates,
   listenGppLookupComplete,
   listenGppLookupProgress,
   startGppLookupJob,
   type GppCatalogStatus,
+  type GppLookupCandidate,
+  type GppLookupCandidates,
   type GppLookupComplete,
   type GppLookupMode,
   type GppLookupProgress,
@@ -105,6 +109,7 @@ export function GppPage() {
   const [progressModalOpen, setProgressModalOpen] = useState(false);
   const [progress, setProgress] = useState<ProgressState>(INITIAL_PROGRESS);
   const [lastComplete, setLastComplete] = useState<GppLookupComplete | null>(null);
+  const [candidatePayload, setCandidatePayload] = useState<GppLookupCandidates | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const activeJobIdRef = useRef<string | null>(null);
   const acceptingProgressRef = useRef(false);
@@ -131,6 +136,7 @@ export function GppPage() {
   useEffect(() => {
     let progressUnlisten: (() => void) | undefined;
     let completeUnlisten: (() => void) | undefined;
+    let candidatesUnlisten: (() => void) | undefined;
     let disposed = false;
 
     listenGppLookupProgress((event) => {
@@ -144,6 +150,9 @@ export function GppPage() {
           state: event.stage === "error" ? "error" : event.stage === "cancelled" ? "cancelled" : "running",
           message: event.message,
         });
+        if (event.stage === "error" || event.stage === "cancelled") {
+          setCandidatePayload(null);
+        }
         if (event.stage === "error" || event.stage === "cancelled") {
           finishActiveBatchItem();
           setProgressModalOpen(false);
@@ -169,6 +178,7 @@ export function GppPage() {
           message: event.message,
         });
         setLastComplete(event);
+        setCandidatePayload(null);
         setLookupError(null);
         finishActiveBatchItem();
         setProgressModalOpen(false);
@@ -185,6 +195,7 @@ export function GppPage() {
         searchedUrlCount: 0,
       });
       setLastComplete(event);
+      setCandidatePayload(null);
       setLookupError(null);
       setActiveJobId(null);
       activeJobIdRef.current = null;
@@ -201,10 +212,41 @@ export function GppPage() {
       }
     });
 
+    listenGppLookupCandidates((event) => {
+      if (activeJobIdRef.current && activeJobIdRef.current !== event.jobId) {
+        return;
+      }
+      activeJobIdRef.current = event.jobId;
+      acceptingProgressRef.current = true;
+      setActiveJobId(event.jobId);
+      setCandidatePayload(event);
+      setProgressModalOpen(false);
+      setProgress({
+        stage: "resolving",
+        message: `${event.candidates.length} exact candidates found. Choose one to download.`,
+        percent: 58,
+        searchedUrlCount: 0,
+      });
+      if (activeBatchItemIdRef.current) {
+        updateBatchItem(activeBatchItemIdRef.current, {
+          jobId: event.jobId,
+          state: "running",
+          message: "Waiting for candidate selection.",
+        });
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        candidatesUnlisten = unlisten;
+      }
+    });
+
     return () => {
       disposed = true;
       progressUnlisten?.();
       completeUnlisten?.();
+      candidatesUnlisten?.();
     };
   }, []);
 
@@ -236,6 +278,7 @@ export function GppPage() {
 
     setLookupError(null);
     setLastComplete(null);
+    setCandidatePayload(null);
     activeJobIdRef.current = null;
     acceptingProgressRef.current = true;
     setProgress(INITIAL_PROGRESS);
@@ -287,6 +330,7 @@ export function GppPage() {
     }));
     setLookupError(null);
     setLastComplete(null);
+    setCandidatePayload(null);
     commitBatchItems(nextItems);
     batchRunningRef.current = true;
     activeBatchItemIdRef.current = null;
@@ -346,6 +390,7 @@ export function GppPage() {
   async function handleCancelJob() {
     const jobId = activeJobIdRef.current ?? activeJobId;
     setProgressModalOpen(false);
+    setCandidatePayload(null);
     setProgress((current) => ({
       ...current,
       stage: "cancelled",
@@ -368,6 +413,34 @@ export function GppPage() {
     }
     if (batchRunningRef.current) {
       await startNextBatchItem();
+    }
+  }
+
+  async function handleSelectCandidate(candidate: GppLookupCandidate) {
+    if (!candidatePayload) {
+      return;
+    }
+
+    try {
+      await continueGppLookupWithCandidate(candidatePayload.jobId, candidate);
+      setCandidatePayload(null);
+      setProgress({
+        stage: "resolving",
+        message: "Downloading selected candidate...",
+        percent: 60,
+        searchedUrlCount: 0,
+      });
+      setProgressModalOpen(true);
+    } catch (source) {
+      setLookupError(messageFromError(source));
+      setCandidatePayload(null);
+      setProgressModalOpen(false);
+      setProgress({
+        stage: "error",
+        message: messageFromError(source),
+        percent: 100,
+        searchedUrlCount: 0,
+      });
     }
   }
 
@@ -588,6 +661,42 @@ export function GppPage() {
       )}
 
       <Modal
+        title="Select 3GPP Candidate"
+        open={candidatePayload !== null}
+        onCancel={handleCancelJob}
+        footer={null}
+        width={860}
+        destroyOnHidden
+      >
+        {candidatePayload && (
+          <div className="candidate-selection">
+            <div className="candidate-summary">
+              <strong>{candidatePayload.query}</strong>
+              <span>{candidatePayload.candidates.length} exact ZIP files matched this query.</span>
+            </div>
+            <div className="candidate-table" aria-label="3GPP candidate files">
+              <div className="candidate-row candidate-head">
+                <span>Work group</span>
+                <span>Meeting</span>
+                <span>URL</span>
+                <span>Action</span>
+              </div>
+              {candidatePayload.candidates.map((candidate) => (
+                <div className="candidate-row" key={`${candidate.meeting}-${candidate.sourceUrl}`}>
+                  <span>{candidate.workGroup}</span>
+                  <code>{candidate.meeting}</code>
+                  <code>{candidate.sourceUrl}</code>
+                  <Button size="small" type="primary" onClick={() => void handleSelectCandidate(candidate)}>
+                    Download
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         title="3GPP Lookup Progress"
         open={progressModalOpen}
         onCancel={handleCancelJob}
@@ -637,7 +746,7 @@ function normalizeStage(stage: string): LookupStage {
   ) {
     return stage;
   }
-  if (stage === "probing" || stage === "listing") {
+  if (stage === "probing" || stage === "listing" || stage === "candidate") {
     return "resolving";
   }
   return "starting";

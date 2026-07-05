@@ -285,6 +285,67 @@ body {
   text-transform: uppercase;
 }
 
+.candidate-selection {
+  display: grid;
+  gap: 14px;
+}
+
+.candidate-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+}
+
+.candidate-summary strong {
+  color: #111827;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.candidate-table {
+  display: grid;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.candidate-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(130px, 0.55fr) minmax(260px, 1fr) minmax(96px, auto);
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-top: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+.candidate-row:first-child {
+  border-top: 0;
+}
+
+.candidate-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.candidate-row code {
+  color: #111827;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.candidate-head {
+  min-height: 36px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .search-controls input:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);

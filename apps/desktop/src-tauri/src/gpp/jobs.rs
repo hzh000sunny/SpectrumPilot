@@ -2,8 +2,26 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GppLookupCandidate {
+    pub tdoc: String,
+    pub source_url: String,
+    pub work_group: String,
+    pub meeting: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GppLookupCandidates {
+    pub job_id: String,
+    pub query: String,
+    pub candidates: Vec<GppLookupCandidate>,
+}
 
 #[derive(Debug, Clone)]
 pub struct LookupJob {
@@ -11,9 +29,10 @@ pub struct LookupJob {
     pub token: CancellationToken,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct JobRegistry {
     jobs: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    candidate_senders: Arc<Mutex<HashMap<String, oneshot::Sender<GppLookupCandidate>>>>,
 }
 
 impl JobRegistry {
@@ -32,12 +51,39 @@ impl JobRegistry {
         let Some(token) = self.jobs.lock().expect("jobs lock").remove(&id) else {
             return false;
         };
+        self.candidate_senders
+            .lock()
+            .expect("candidate senders lock")
+            .remove(&id);
         token.cancel();
         true
     }
 
     pub fn finish_job(&self, id: &str) {
         self.jobs.lock().expect("jobs lock").remove(id);
+        self.candidate_senders
+            .lock()
+            .expect("candidate senders lock")
+            .remove(id);
+    }
+
+    pub fn register_candidate_waiter(&self, id: &str, sender: oneshot::Sender<GppLookupCandidate>) {
+        self.candidate_senders
+            .lock()
+            .expect("candidate senders lock")
+            .insert(id.to_string(), sender);
+    }
+
+    pub fn choose_candidate(&self, id: &str, candidate: GppLookupCandidate) -> bool {
+        let Some(sender) = self
+            .candidate_senders
+            .lock()
+            .expect("candidate senders lock")
+            .remove(id)
+        else {
+            return false;
+        };
+        sender.send(candidate).is_ok()
     }
 }
 
@@ -72,7 +118,7 @@ pub struct GppLookupComplete {
 
 #[cfg(test)]
 mod tests {
-    use super::{GppLookupComplete, JobRegistry};
+    use super::{GppLookupCandidate, GppLookupCandidates, GppLookupComplete, JobRegistry};
 
     #[test]
     fn cancel_marks_existing_job_token() {
@@ -113,5 +159,33 @@ mod tests {
         let value = serde_json::to_value(complete).expect("serialize complete");
 
         assert_eq!(value["cacheStatus"], "cached_document");
+    }
+
+    #[test]
+    fn lookup_candidates_payload_serializes_for_the_ui() {
+        let candidates = GppLookupCandidates {
+            job_id: "job-1".to_string(),
+            query: "R2-2601401".to_string(),
+            candidates: vec![GppLookupCandidate {
+                tdoc: "R2-2601401".to_string(),
+                source_url:
+                    "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip"
+                        .to_string(),
+                work_group: "RAN2".to_string(),
+                meeting: "TSGR2_133bis".to_string(),
+            }],
+        };
+
+        let value = serde_json::to_value(candidates).expect("serialize candidates");
+
+        assert_eq!(value["jobId"], "job-1");
+        assert_eq!(value["query"], "R2-2601401");
+        assert_eq!(value["candidates"][0]["tdoc"], "R2-2601401");
+        assert_eq!(
+            value["candidates"][0]["sourceUrl"],
+            "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip"
+        );
+        assert_eq!(value["candidates"][0]["workGroup"], "RAN2");
+        assert_eq!(value["candidates"][0]["meeting"], "TSGR2_133bis");
     }
 }

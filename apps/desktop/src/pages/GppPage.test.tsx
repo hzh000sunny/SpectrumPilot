@@ -348,6 +348,114 @@ describe("GppPage", () => {
     expect(await screen.findByText("Cancelled")).toBeInTheDocument();
     expect(await screen.findByText("Running")).toBeInTheDocument();
   });
+
+  it("shows multiple exact candidates and waits for the user to choose one", async () => {
+    const user = userEvent.setup();
+    let progressHandler: ((event: { payload: unknown }) => void) | undefined;
+    let candidatesHandler: ((event: { payload: unknown }) => void) | undefined;
+    let completeHandler: ((event: { payload: unknown }) => void) | undefined;
+    const selectedCandidate = {
+      tdoc: "R2-2601401",
+      sourceUrl:
+        "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_133bis/Docs/R2-2601401.zip",
+      workGroup: "RAN2",
+      meeting: "TSGR2_133bis",
+    };
+
+    listenMock.mockImplementation((event: string, handler: (event: { payload: unknown }) => void) => {
+      if (event === "gpp-job-progress") {
+        progressHandler = handler;
+      }
+      if (event === "gpp-job-candidates") {
+        candidatesHandler = handler;
+      }
+      if (event === "gpp-job-complete") {
+        completeHandler = handler;
+      }
+      return Promise.resolve(() => undefined);
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "gpp_catalog_status") {
+        return Promise.resolve({
+          catalogRoot: "Preview only",
+          manifestCount: 0,
+          recordCount: 0,
+          indexCount: 0,
+          lastCheckedAt: null,
+        });
+      }
+      if (command === "start_gpp_lookup_job") {
+        return Promise.resolve({ jobId: "job-1" });
+      }
+      if (command === "continue_gpp_lookup_with_candidate") {
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<GppPage />);
+    await user.type(await screen.findByRole("textbox", { name: /query/i }), "R2-2601401");
+    await user.click(await screen.findByRole("button", { name: /find, download & open/i }));
+    await waitFor(() => {
+      expect(progressHandler).toBeDefined();
+      expect(candidatesHandler).toBeDefined();
+      expect(invokeMock).toHaveBeenCalledWith("start_gpp_lookup_job", expect.anything());
+    });
+
+    await act(async () => {
+      progressHandler?.({
+        payload: {
+          jobId: "job-1",
+          stage: "candidate",
+          message: "2 exact candidates found. Select one to download.",
+          progress: 58,
+          searchedUrlCount: 24,
+        },
+      });
+      candidatesHandler?.({
+        payload: {
+          jobId: "job-1",
+          query: "R2-2601401",
+          candidates: [
+            selectedCandidate,
+            {
+              tdoc: "R2-2601401",
+              sourceUrl:
+                "https://www.3gpp.org/ftp/tsg_ran/WG2_RL2/TSGR2_134/Docs/R2-2601401.zip",
+              workGroup: "RAN2",
+              meeting: "TSGR2_134",
+            },
+          ],
+        },
+      });
+    });
+
+    const dialogTitle = await screen.findByText("Select 3GPP Candidate");
+    const dialog = dialogTitle.closest(".ant-modal") as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(within(dialog).getByText("TSGR2_133bis")).toBeInTheDocument();
+    expect(within(dialog).getByText("TSGR2_134")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Last Lookup" })).not.toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "continue_gpp_lookup_with_candidate",
+      expect.anything(),
+    );
+
+    await user.click(within(dialog).getAllByRole("button", { name: "Download" })[0]);
+
+    expect(invokeMock).toHaveBeenCalledWith("continue_gpp_lookup_with_candidate", {
+      jobId: "job-1",
+      candidate: selectedCandidate,
+    });
+
+    act(() => {
+      completeHandler?.({
+        payload: lookupCompletePayload("job-1", "R2-2601401"),
+      });
+    });
+
+    expect(await screen.findByRole("heading", { name: "Last Lookup" })).toBeInTheDocument();
+  });
 });
 
 function lookupCompletePayload(jobId: string, query: string) {

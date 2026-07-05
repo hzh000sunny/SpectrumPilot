@@ -103,6 +103,19 @@ export type GppLookupComplete = {
   message: string;
 };
 
+export type GppLookupCandidate = {
+  tdoc: string;
+  sourceUrl: string;
+  workGroup: string;
+  meeting: string;
+};
+
+export type GppLookupCandidates = {
+  jobId: string;
+  query: string;
+  candidates: GppLookupCandidate[];
+};
+
 export type LookupHistoryRecord = {
   schemaVersion: number;
   recordType: string;
@@ -292,6 +305,17 @@ export async function cancelGppLookupJob(jobId: string): Promise<boolean> {
   return invoke<boolean>("cancel_gpp_lookup_job", { jobId });
 }
 
+export async function continueGppLookupWithCandidate(
+  jobId: string,
+  candidate: GppLookupCandidate,
+): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+
+  return invoke<void>("continue_gpp_lookup_with_candidate", { jobId, candidate });
+}
+
 export async function listenGppLookupProgress(
   handler: (event: GppLookupProgress) => void,
 ): Promise<UnlistenFn> {
@@ -310,4 +334,14 @@ export async function listenGppLookupComplete(
   }
 
   return listen<GppLookupComplete>("gpp-job-complete", (event) => handler(event.payload));
+}
+
+export async function listenGppLookupCandidates(
+  handler: (event: GppLookupCandidates) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return () => undefined;
+  }
+
+  return listen<GppLookupCandidates>("gpp-job-candidates", (event) => handler(event.payload));
 }
